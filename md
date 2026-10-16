@@ -11,4 +11,5 @@ while ! nc -z localhost 3000 2>/dev/null; do
     sleep 0.1
 done
 
+cat "$HOME/mdbun.log"
 xdg-open "http://localhost:3000/"
