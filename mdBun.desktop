@@ -1,0 +1,14 @@
+[Desktop Entry]
+Comment=Display .md file as HTML in default browser
+Exec=/usr/local/bin/md %f
+Icon=/home/colin/.local/share/icons/hicolor/64x64/md.png
+Name=mdBun
+NoDisplay=false
+Path=
+PrefersNonDefaultGPU=false
+StartupNotify=true
+Terminal=false
+TerminalOptions=
+Type=Application
+X-KDE-SubstituteUID=false
+X-KDE-Username=
