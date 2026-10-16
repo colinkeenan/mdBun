@@ -1,7 +1,10 @@
 # mdBun
 
-Serve `.md` files to html on `localhost:3000`on Linux or Termux on Android  
-For either, first clone this repo.
+Serve `.md` files to `html` on `localhost:3000`on Linux or Termux on Android
+
+Both `server.ts` and `package.json` were written by Claude free. I asked it to make a markdown to html server that would run using bun in a terminal by using bun's built-in markdown capability. I also asked it to render math and html for expandable content, and to simply open the .md file provided on the command line. What it came up with works perfectly without any dependencies but requires internet access in order to access highlight.js CDN and KaTeX. It offered to bundle KaTex and highlight.js locally to make it work offline, but I'd rather keep it working without dependencies. I wrote the desktop file and bash script with a little help from Copilot on the web.
+
+Whether running on Linux or Termux on Android, the first step is to simply clone this repo.
 
 ### Linux
 
