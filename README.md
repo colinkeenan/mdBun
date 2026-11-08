@@ -8,6 +8,8 @@ Both `server.ts` and `package.json` were written by Claude free. I asked it to m
 
 Links to other `.md` files are rendered as HTML too, so a table of contents that links to one file per chapter works like a small website. Links into subfolders (`chapters/ch1.md`), back up (`../toc.md`), and to headings (`ch1.md#section-a`) all work. Only files inside the folder of a `.md` file you opened with `md` (and its subfolders) can be reached, so open the top-level file (e.g. the table of contents) rather than a chapter in a subfolder.
 
+Following a link to a place in a page (`#id`: an index entry, a footnote, a heading) scrolls it to the middle of the window and briefly flashes it, so you can see where you landed. This also happens when the page is opened with that `#id` in its address, and again when you click the same link twice.
+
 ### Folders
 
 `md some/folder` (or `md` with no argument, for the current folder) shows a page listing the folder's `.md` files, sorted so `chapter2.md` comes before `chapter10.md`, each with its `# title` beside the name. Subfolders that contain `.md` files are listed too, and `../` leads back up as long as it's still inside a folder opened with `md`. Opening a folder lets its files and subfolders be reached, just like opening a file in it. The listing updates by itself when files are added, removed, renamed, or retitled.

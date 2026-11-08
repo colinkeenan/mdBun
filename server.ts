@@ -210,7 +210,31 @@ const liveHead = (self: string, isDir = false) => `
         sessionStorage.removeItem(SCROLL);
         sessionStorage.removeItem(TARGET);
       } catch {}
+      // A link to "#id" (an index entry, a footnote, a page marker): scroll the target into
+      // view and flash it, so you see where you landed. Done again on load because KaTeX
+      // changes the page height after the browser's own jump to the hash. An empty anchor
+      // (<a id="x"></a>) shows nothing, so its parent (heading, paragraph) flashes instead.
+      function flashHash() {
+        let id = location.hash.slice(1);
+        try { id = decodeURIComponent(id); } catch {}
+        let el = id && document.getElementById(id);
+        if (!el) return;
+        if (!el.textContent.trim() && el.parentElement) el = el.parentElement;
+        el.scrollIntoView({ block: "center" });
+        el.classList.remove("md-flash");
+        void el.offsetWidth; // restart the animation when the same target is flashed again
+        el.classList.add("md-flash");
+      }
+      addEventListener("hashchange", flashHash);
+      // Clicking a link to the hash already in the address bar fires no hashchange.
+      document.addEventListener("click", (e) => {
+        const a = e.target.closest && e.target.closest("a[href*='#']");
+        if (a && a.href === location.href) setTimeout(flashHash);
+      });
+
       addEventListener("load", () => {
+        // a live reload restores its own position; otherwise honour the link's #target
+        if (y === null && target === null && location.hash) flashHash();
         if (y !== null) scrollTo(0, Number(y));
         const el = target && resolve(target);
         if (!el) return;
