@@ -36,7 +36,11 @@ if (!FILE_KIND) {
 const PORT = Number(process.env.PORT ?? 3000);
 
 const CSS = `
+  /* Light or dark follows the system unless the page's toggle set data-theme on <html>. */
   :root { color-scheme: light dark; }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
+  body { background: Canvas; color: CanvasText; }
   body { max-width: 760px; margin: 2rem auto; padding: 0 1rem;
          font: 16px/1.6 system-ui, sans-serif; }
   pre { padding: 1rem; overflow-x: auto; background: #8881; border-radius: 6px; }
@@ -75,9 +79,24 @@ const CSS = `
   :root { --a-note: #0969da; --a-tip: #1a7f37; --a-important: #8250df;
           --a-warning: #9a6700; --a-caution: #cf222e; }
   @media (prefers-color-scheme: dark) {
-    :root { --a-note: #4493f8; --a-tip: #3fb950; --a-important: #ab7df8;
+    :root:not([data-theme="light"]) { --a-note: #4493f8; --a-tip: #3fb950; --a-important: #ab7df8;
             --a-warning: #d29922; --a-caution: #f85149; }
   }
+  :root[data-theme="dark"] { --a-note: #4493f8; --a-tip: #3fb950; --a-important: #ab7df8;
+          --a-warning: #d29922; --a-caution: #f85149; }
+
+  /* Light/dark toggle. Its icon comes from CSS so the button's HTML never changes, which
+     keeps live reload's comparison of old and new pages from seeing a difference in it. */
+  .theme-toggle { position: fixed; top: 0.6rem; right: 0.6rem; width: 2.2rem; height: 2.2rem;
+                  border: 1px solid #8885; border-radius: 50%; background: Canvas; cursor: pointer;
+                  font-size: 1.1rem; line-height: 1; padding: 0; opacity: 0.6; }
+  .theme-toggle:hover, .theme-toggle:focus-visible { opacity: 1; }
+  .theme-toggle::before { content: "🌙"; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .theme-toggle::before { content: "☀️"; }
+  }
+  :root[data-theme="dark"] .theme-toggle::before { content: "☀️"; }
+  @media print { .theme-toggle { display: none; } }
   .alert { border-left: 4px solid var(--c); padding: 0.1rem 1rem; margin: 1rem 0; }
   .alert > :last-child { margin-bottom: 0.6rem; }
   .alert-note { --c: var(--a-note); }
@@ -93,9 +112,13 @@ const CSS = `
 // KaTeX typesets math in the browser; only loaded for pages that contain math.
 // Only elements the server marked with class "math" are rendered. We deliberately do NOT
 // use KaTeX's auto-render, which would re-scan the page and treat text like "$5 and $10" as math.
+//
+// The CDN versions are pinned exactly: jsDelivr lets browsers cache a pinned file for a year,
+// but a version range like "katex@0.16" for only a week, after which it is downloaded again.
+const KATEX = "https://cdn.jsdelivr.net/npm/katex@0.16.47/dist";
 const KATEX_HEAD = `
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css">
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js"></script>
+  <link rel="stylesheet" href="${KATEX}/katex.min.css">
+  <script defer src="${KATEX}/katex.min.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", () => {
       if (!window.katex) return; // CDN unreachable: the TeX source stays visible
@@ -113,10 +136,10 @@ const KATEX_HEAD = `
 
 // highlight.js colors fenced code that declares a language (```ts, ```python, ...).
 // Blocks without a language are left alone rather than guessed at. Theme follows light/dark mode.
-const HLJS = "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build";
+const HLJS = "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.12.0/build";
 const HLJS_HEAD = `
-  <link rel="stylesheet" href="${HLJS}/styles/github.min.css" media="(prefers-color-scheme: light)">
-  <link rel="stylesheet" href="${HLJS}/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="${HLJS}/styles/github.min.css" media="(prefers-color-scheme: light)" data-theme-for="light">
+  <link rel="stylesheet" href="${HLJS}/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" data-theme-for="dark">
   <script defer src="${HLJS}/highlight.min.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", () => {
@@ -129,7 +152,8 @@ const HLJS_HEAD = `
 
 // Live reload: the page listens on a Server-Sent Events stream and reloads when told to.
 // The scroll position is kept across the reload, and if the connection drops and comes back
-// (the server was restarted) the page reloads once to pick up the new version.
+// (the server was restarted) the page reloads once to pick up the new version. Only one tab
+// at a time holds the stream open and relays it to the others (see listen() below).
 //
 // It also finds where you just edited. Bun's parser keeps no source positions, so instead of
 // mapping source lines to elements the page compares the old and new *rendered* HTML: it
@@ -197,12 +221,9 @@ const liveHead = (self: string, isDir = false) => `
         el.classList.add("md-flash");
       });
 
-      let dropped = false;
-      const es = new EventSource("/__reload");
-      es.addEventListener("reload", async (e) => {
-        // Reload only for this page's own file, or for a file it embeds (an image).
-        // Other tabs may be showing other files; their changes don't concern this page.
-        const changed = e.data;
+      // Reload only for this page's own file, or for a file it embeds (an image).
+      // Other tabs may be showing other files; their changes don't concern this page.
+      async function onChange(changed) {
         const uses = (el) => {
           try { return decodeURIComponent(new URL(el.src || el.href).pathname) === changed; }
           catch { return false; }
@@ -222,13 +243,71 @@ const liveHead = (self: string, isDir = false) => `
           }
         } catch {}
         location.reload();
-      });
-      es.onerror = () => { dropped = true; };
-      es.onopen = () => {
-        if (!dropped) return;
+      }
+
+      // The server was restarted: reload to pick up the new version.
+      function onRestart() {
         try { sessionStorage.setItem(SCROLL, String(scrollY)); } catch {}
         location.reload();
-      };
+      }
+
+      // Browsers allow only 6 connections to one server, and each event stream holds one open
+      // for good, so with 6 tabs open new pages would wait forever. Instead one tab at a time
+      // (whichever holds the "md-live" lock) listens to the server and passes what it hears on
+      // to the other tabs. When it closes or moves to another page, its lock is released and
+      // the next waiting tab takes over.
+      function listen(relay) {
+        let dropped = false;
+        const es = new EventSource("/__reload");
+        es.addEventListener("reload", (e) => { relay?.postMessage({ reload: e.data }); onChange(e.data); });
+        es.onerror = () => { dropped = true; };
+        es.onopen = () => {
+          if (!dropped) return;
+          relay?.postMessage({ restart: true });
+          onRestart();
+        };
+      }
+      if (navigator.locks && window.BroadcastChannel) {
+        const relay = new BroadcastChannel("md-live");
+        relay.onmessage = ({ data }) => data.restart ? onRestart() : onChange(data.reload);
+        // Holding the lock until the page goes away: the promise never resolves.
+        navigator.locks.request("md-live", () => { listen(relay); return new Promise(() => {}); });
+      } else {
+        listen(null);
+      }
+    })();
+  </script>`;
+
+// Light/dark toggle. A choice made with the button is stored in localStorage, which every tab
+// on localhost:3000 shares, so it applies to all pages and other open tabs switch at once.
+// Switching back to whatever the system uses forgets the choice, so the page follows the
+// system again. Runs in <head> so the page never flashes the wrong theme while loading.
+const THEME_HEAD = `
+  <script>
+    (() => {
+      const KEY = "md-theme", root = document.documentElement;
+      const system = matchMedia("(prefers-color-scheme: dark)");
+      const get = () => { try { return localStorage.getItem(KEY); } catch { return null; } };
+      function apply(theme) {
+        if (theme) root.dataset.theme = theme; else delete root.dataset.theme;
+        // highlight.js themes are picked by their media attribute, not by CSS selectors.
+        for (const link of document.querySelectorAll("link[data-theme-for]")) {
+          const t = link.dataset.themeFor;
+          link.media = theme ? (t === theme ? "all" : "not all") : "(prefers-color-scheme: " + t + ")";
+        }
+      }
+      apply(get());
+      document.addEventListener("DOMContentLoaded", () => {
+        apply(get()); // the highlight.js links come after this script
+        document.querySelector(".theme-toggle")?.addEventListener("click", () => {
+          const now = root.dataset.theme || (system.matches ? "dark" : "light");
+          const next = now === "dark" ? "light" : "dark";
+          const keep = next !== (system.matches ? "dark" : "light");
+          try { keep ? localStorage.setItem(KEY, next) : localStorage.removeItem(KEY); } catch {}
+          apply(keep ? next : null);
+        });
+      });
+      addEventListener("storage", (e) => { if (e.key === KEY) apply(e.newValue); });
     })();
   </script>`;
 
@@ -292,10 +371,11 @@ function page(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
-  <style>${CSS}</style>${opts.live ? liveHead(opts.live, opts.dir) : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
+  <style>${CSS}</style>${THEME_HEAD}${opts.live ? liveHead(opts.live, opts.dir) : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
 </head>
 <body>
 ${body}
+<button class="theme-toggle" type="button" aria-label="Switch between light and dark" title="Switch between light and dark"></button>
 </body>
 </html>`;
   return new Response(html, {

@@ -12,11 +12,15 @@ Links to other `.md` files are rendered as HTML too, so a table of contents that
 
 `md some/folder` (or `md` with no argument, for the current folder) shows a page listing the folder's `.md` files, sorted so `chapter2.md` comes before `chapter10.md`, each with its `# title` beside the name. Subfolders that contain `.md` files are listed too, and `../` leads back up as long as it's still inside a folder opened with `md`. Opening a folder lets its files and subfolders be reached, just like opening a file in it. The listing updates by itself when files are added, removed, renamed, or retitled.
 
+### Light and dark
+
+Pages follow the system's light or dark setting. The ☀️/🌙 button in the top-right corner switches between them; the choice applies to every tab and is remembered. Switching back to match the system forgets the choice, so pages follow the system again.
+
 ### Multiple tabs
 
 Each file gets its own address based on its full path, like `http://localhost:3000/home/me/book/toc.md`, so every tab can show a different file, from the same folder or different ones. Running `md` while the server is already running adds the file to it and opens a new tab, instead of restarting the server, so tabs that are already open keep working. The server keeps running until you stop it (e.g. `fuser -k 3000/tcp`). Restarting it means files in folders other than the one you start it with show "Not available" until you run `md` on them again.
 
-Live reload watches only the folders of files being shown. Each tab reloads only when its own file, or an image it shows, changes, so editing one chapter doesn't disturb a tab showing another.
+Live reload watches only the folders of files being shown. Each tab reloads only when its own file, or an image it shows, changes, so editing one chapter doesn't disturb a tab showing another. Only one tab at a time keeps a connection open to the server for this and passes changes on to the others, because browsers allow just 6 connections to one server: if every tab kept its own, opening a 7th page would hang.
 
 The server only listens on `127.0.0.1`, so other machines can't reach it.
 
