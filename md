@@ -1,9 +1,10 @@
 #!/bin/bash
-# Show a Markdown file in the browser. One server shows any number of files, each in its own
-# tab: if it's already running, the file is added to it; otherwise it's started.
-file="$(realpath "$1")"
+# Show a Markdown file in the browser, or a folder as a list of links to its Markdown files.
+# One server shows any number of files, each in its own tab: if it's already running, the file
+# is added to it; otherwise it's started. With no argument, the current folder is shown.
+file="$(realpath "${1:-.}")" || exit 1
 
-# Ask the server to add the file; it prints the file's URL.
+# Ask the server to add the file or folder; it prints its URL.
 open_file() {
     curl -sf --data-urlencode "path=$file" http://localhost:3000/__open
 }

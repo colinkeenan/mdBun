@@ -1,4 +1,5 @@
 import { watch } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 // GitHub's emoji shortcodes (":tada:" -> 🎉), generated from the gemoji database.
 import emojiMap from "./emojis.json";
@@ -12,13 +13,23 @@ const LIVE_RELOAD = process.env.LIVE_RELOAD !== "0";
 
 const arg = process.argv[2];
 if (!arg || arg === "-h" || arg === "--help") {
-  console.error("Usage: bun run server.ts <file.md>   (PORT=3000 by default)");
+  console.error("Usage: bun run server.ts <file.md | folder>   (PORT=3000 by default)");
   process.exit(arg ? 0 : 1);
 }
 
+/** "file", "dir", or null if the path doesn't exist. */
+async function kindOf(path: string): Promise<"file" | "dir" | null> {
+  try {
+    return (await stat(path)).isDirectory() ? "dir" : "file";
+  } catch {
+    return null;
+  }
+}
+
 const FILE = resolve(arg);
-if (!(await Bun.file(FILE).exists())) {
-  console.error(`File not found: ${FILE}`);
+const FILE_KIND = await kindOf(FILE);
+if (!FILE_KIND) {
+  console.error(`Not found: ${FILE}`);
   process.exit(1);
 }
 
@@ -53,6 +64,12 @@ const CSS = `
   /* Briefly marks the element that changed after a live reload. */
   @keyframes md-flash { from { background-color: #ffd33d88; } to { background-color: transparent; } }
   .md-flash { animation: md-flash 2.5s ease-out; }
+
+  /* Folder listings */
+  .listing { list-style: none; padding: 0; }
+  .listing li { padding: 0.3rem 0; border-bottom: 1px solid #8883; }
+  .listing .doc-title { color: #888; margin-left: 0.5rem; }
+  .listing .empty { color: #888; }
 
   /* GitHub-style alerts: > [!NOTE] */
   :root { --a-note: #0969da; --a-tip: #1a7f37; --a-important: #8250df;
@@ -120,10 +137,11 @@ const HLJS_HEAD = `
 // trees to the first element that differs (descending into lists, tables, quotes, alerts, etc.
 // so a one-line edit in a long list points at that item, not the whole list). After the reload
 // that element is scrolled into view if it is off-screen, and flashed briefly.
-const liveHead = (self: string) => `
+const liveHead = (self: string, isDir = false) => `
   <script>
     (() => {
       const SELF = ${JSON.stringify(self).replace(/</g, "\\u003c")};
+      const IS_DIR = ${isDir};
       const SCROLL = "md-live-scroll", TARGET = "md-live-target";
       const CONTAINERS = new Set(["UL", "OL", "TABLE", "THEAD", "TBODY", "BLOCKQUOTE", "DETAILS", "DIV", "SECTION"]);
 
@@ -189,13 +207,17 @@ const liveHead = (self: string) => `
           try { return decodeURIComponent(new URL(el.src || el.href).pathname) === changed; }
           catch { return false; }
         };
-        if (changed !== SELF && ![...document.querySelectorAll("[src], link[href]")].some(uses)) return;
+        // A folder listing cares about anything directly inside the folder.
+        const inside = IS_DIR && changed.slice(0, changed.lastIndexOf("/")) === SELF;
+        if (!inside && changed !== SELF && ![...document.querySelectorAll("[src], link[href]")].some(uses)) return;
         try {
           sessionStorage.setItem(SCROLL, String(scrollY));
           const res = await fetch(location.pathname, { cache: "no-store" });
           if (res.ok && pristine) {
             const next = new DOMParser().parseFromString(await res.text(), "text/html");
             const path = firstDiff(pristine, next.body);
+            // Most edits in a folder don't change its listing; only reload when it did.
+            if (IS_DIR && !path) { sessionStorage.removeItem(SCROLL); return; }
             if (path) sessionStorage.setItem(TARGET, JSON.stringify(path));
           }
         } catch {}
@@ -233,8 +255,7 @@ const watched = new Set<string>();
 let pending = new Set<string>();
 let timer: ReturnType<typeof setTimeout> | undefined;
 
-function watchFolderOf(file: string) {
-  const dir = dirname(file);
+function watchFolder(dir: string) {
   if (!LIVE_RELOAD || watched.has(dir)) return;
   watched.add(dir);
   try {
@@ -252,6 +273,8 @@ function watchFolderOf(file: string) {
   }
 }
 
+const watchFolderOf = (file: string) => watchFolder(dirname(file));
+
 // Keep idle connections alive through proxies and browsers.
 if (LIVE_RELOAD) setInterval(() => broadcast(": ping\n\n"), 15_000);
 
@@ -261,7 +284,7 @@ const escapeHtml = (s: string) =>
 function page(
   title: string,
   body: string,
-  opts: { status?: number; math?: boolean; code?: boolean; live?: string } = {},
+  opts: { status?: number; math?: boolean; code?: boolean; live?: string; dir?: boolean } = {},
 ) {
   const html = `<!doctype html>
 <html lang="en">
@@ -269,7 +292,7 @@ function page(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
-  <style>${CSS}</style>${opts.live ? liveHead(opts.live) : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
+  <style>${CSS}</style>${opts.live ? liveHead(opts.live, opts.dir) : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
 </head>
 <body>
 ${body}
@@ -480,19 +503,86 @@ async function renderFile(path: string) {
   });
 }
 
-// One server shows any number of files, each in its own tab. A page's URL is the file's
-// absolute path (http://localhost:3000/home/me/book/toc.md), so relative links between files
-// just work. Only folders that were opened explicitly (the file given at startup, plus any
-// added later through /__open by the `md` script) and their subfolders can be served.
-const roots = new Set<string>();
-let lastOpened = FILE;
+const MD_FILE = /\.(md|markdown)$/i;
+const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }).compare;
 
-function open(file: string) {
-  roots.add(dirname(file));
-  lastOpened = file;
+/** The first "# heading" near the top of a Markdown file, or "" if there isn't one. */
+async function headingOf(path: string): Promise<string> {
+  try {
+    const top = await Bun.file(path).slice(0, 8192).text();
+    return replaceShortcodes(top.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "");
+  } catch {
+    return "";
+  }
 }
 
-const urlPath = (file: string) => file.split(sep).map(encodeURIComponent).join("/");
+/** Does this folder directly contain a Markdown file? */
+async function hasMarkdown(dir: string): Promise<boolean> {
+  try {
+    return (await readdir(dir)).some((n) => !n.startsWith(".") && MD_FILE.test(n));
+  } catch {
+    return false;
+  }
+}
+
+// A folder is shown as a list of links to its Markdown files (with each file's title, if it
+// has one) and to its subfolders that contain Markdown. Its URL ends in "/", so the links are
+// just the names. Sorted so "chapter2" comes before "chapter10".
+async function renderDir(dir: string) {
+  const entries = (await readdir(dir, { withFileTypes: true }))
+    .filter((e) => !e.name.startsWith("."))
+    .sort((a, b) => byName(a.name, b.name));
+  const folders: string[] = [];
+  const files: string[] = [];
+  for (const e of entries) {
+    const full = join(dir, e.name);
+    // Follow symlinks: stat says what they point at.
+    const kind = e.isSymbolicLink() ? await kindOf(full) : e.isDirectory() ? "dir" : "file";
+    if (kind === "dir" && (await hasMarkdown(full))) folders.push(e.name);
+    else if (kind === "file" && MD_FILE.test(e.name)) files.push(e.name);
+  }
+  const titles = await Promise.all(files.map((n) => headingOf(join(dir, n))));
+
+  const link = (name: string, href: string, title = "") =>
+    `<li><a href="${escapeHtml(href)}">${escapeHtml(name)}</a>` +
+    (title && title !== name ? `<span class="doc-title">${escapeHtml(title)}</span>` : "") +
+    `</li>`;
+  const items = [
+    ...(isServable(dirname(dir)) && dirname(dir) !== dir ? [link("../", "../")] : []),
+    ...folders.map((n) => link(n + "/", encodeURIComponent(n) + "/")),
+    ...files.map((n, i) => link(n, encodeURIComponent(n), titles[i])),
+  ];
+  if (folders.length + files.length === 0) {
+    items.push(`<li class="empty">No Markdown files here.</li>`);
+  }
+  const name = basename(dir) || dir;
+  return page(
+    name,
+    `<h1>📁 ${escapeHtml(name)}</h1>\n<ul class="listing">\n${items.join("\n")}\n</ul>`,
+    { live: LIVE_RELOAD ? dir : undefined, dir: true },
+  );
+}
+
+// One server shows any number of files, each in its own tab. A page's URL is the file's
+// absolute path (http://localhost:3000/home/me/book/toc.md), so relative links between files
+// just work. Only folders that were opened explicitly (the folder of the file given at startup,
+// or the folder itself, plus any added later through /__open by the `md` script) and their
+// subfolders can be served. A folder's URL ends in "/".
+const roots = new Set<string>();
+let lastOpened = "";
+
+function open(path: string, kind: "file" | "dir") {
+  roots.add(kind === "dir" ? path : dirname(path));
+  lastOpened = urlPath(path) + (kind === "dir" && path !== "/" ? "/" : "");
+  return lastOpened;
+}
+
+function urlPath(file: string) {
+  return file.split(sep).map(encodeURIComponent).join("/");
+}
+
+const isServable = (full: string) =>
+  [...roots].some((root) => full === root || full.startsWith(root === "/" ? "/" : root + sep));
 
 /** Map a URL path to a file inside an opened folder, or null if it is outside all of them. */
 function safePath(pathname: string): string | null {
@@ -504,8 +594,7 @@ function safePath(pathname: string): string | null {
   }
   if (decoded.includes("\0")) return null;
   const full = resolve("/", "." + decoded);
-  for (const root of roots) if (full.startsWith(root + sep)) return full;
-  return null;
+  return isServable(full) ? full : null;
 }
 
 // Only answer requests addressed to this machine by name, which defeats DNS rebinding (a web
@@ -529,7 +618,7 @@ function reloadStream(): Response {
   });
 }
 
-open(FILE);
+open(FILE, FILE_KIND);
 
 const server = Bun.serve({
   port: PORT,
@@ -547,20 +636,18 @@ const server = Bun.serve({
         return new Response("Forbidden", { status: 403 });
       }
       const path = new URLSearchParams(await req.text()).get("path") ?? "";
-      const file = Bun.file(path);
-      if (!path.startsWith("/") || !(await file.exists())) {
-        return new Response(`File not found: ${path}\n`, { status: 404 });
-      }
+      const kind = path.startsWith("/") ? await kindOf(path) : null;
+      if (!kind) return new Response(`Not found: ${path}\n`, { status: 404 });
       const full = resolve(path);
-      open(full);
+      const where = open(full, kind);
       console.log(`Opened ${full}`);
-      return new Response(`http://localhost:${server.port}${urlPath(full)}\n`);
+      return new Response(`http://localhost:${server.port}${where}\n`);
     }
 
     if (req.method !== "GET" && req.method !== "HEAD") {
       return new Response("Method not allowed", { status: 405 });
     }
-    if (pathname === "/") return Response.redirect(urlPath(lastOpened), 302);
+    if (pathname === "/" && lastOpened !== "/") return Response.redirect(lastOpened, 302);
     if (LIVE_RELOAD && pathname === "/__reload") return reloadStream();
 
     // Serve files (Markdown and images etc.) from the opened folders.
@@ -574,12 +661,18 @@ const server = Bun.serve({
       );
     }
 
-    const file = Bun.file(target);
-    if (await file.exists()) {
+    const kind = await kindOf(target);
+    if (kind === "dir") {
+      // Without the trailing slash, relative links in the listing would point at the parent.
+      if (!pathname.endsWith("/")) return Response.redirect(pathname + "/" + url.search, 302);
+      watchFolder(target);
+      return renderDir(target);
+    }
+    if (kind === "file") {
       watchFolderOf(target);
       // Linked Markdown files (e.g. TOC -> chapter) are rendered too, not sent as raw text.
-      if (/\.(md|markdown)$/i.test(target)) return renderFile(target);
-      return new Response(file);
+      if (MD_FILE.test(target)) return renderFile(target);
+      return new Response(Bun.file(target));
     }
 
     return page("Not found", "<h1>404</h1><p>Page not found.</p>", { status: 404 });
@@ -590,4 +683,4 @@ const server = Bun.serve({
   },
 });
 
-console.log(`Serving ${FILE} at http://localhost:${server.port}${urlPath(FILE)}`);
+console.log(`Serving ${FILE} at http://localhost:${server.port}${lastOpened}`);

@@ -1,6 +1,7 @@
 [Desktop Entry]
-Comment=Display .md file as HTML in default browser
+Comment=Display .md file as HTML in default browser, or a folder as a list of its .md files
 Exec=/usr/local/bin/md %f
+MimeType=text/markdown;inode/directory;
 Icon=/home/colin/.local/share/icons/hicolor/64x64/md.png
 Name=mdBun
 NoDisplay=false

@@ -8,6 +8,10 @@ Both `server.ts` and `package.json` were written by Claude free. I asked it to m
 
 Links to other `.md` files are rendered as HTML too, so a table of contents that links to one file per chapter works like a small website. Links into subfolders (`chapters/ch1.md`), back up (`../toc.md`), and to headings (`ch1.md#section-a`) all work. Only files inside the folder of a `.md` file you opened with `md` (and its subfolders) can be reached, so open the top-level file (e.g. the table of contents) rather than a chapter in a subfolder.
 
+### Folders
+
+`md some/folder` (or `md` with no argument, for the current folder) shows a page listing the folder's `.md` files, sorted so `chapter2.md` comes before `chapter10.md`, each with its `# title` beside the name. Subfolders that contain `.md` files are listed too, and `../` leads back up as long as it's still inside a folder opened with `md`. Opening a folder lets its files and subfolders be reached, just like opening a file in it. The listing updates by itself when files are added, removed, renamed, or retitled.
+
 ### Multiple tabs
 
 Each file gets its own address based on its full path, like `http://localhost:3000/home/me/book/toc.md`, so every tab can show a different file, from the same folder or different ones. Running `md` while the server is already running adds the file to it and opens a new tab, instead of restarting the server, so tabs that are already open keep working. The server keeps running until you stop it (e.g. `fuser -k 3000/tcp`). Restarting it means files in folders other than the one you start it with show "Not available" until you run `md` on them again.
@@ -24,9 +28,10 @@ Whether running on Linux or Termux on Android, the first step is to simply clone
 1. Put `mdBun.desktop` in `~/.local/share/applications`.
 1. Edit `md` to have the correct path to `mdBun`, `chmod +x md`, and put `md` in `/usr/local/bin`.
 1. In a file browser, set the default application for opening `.md` files to `mdBun`.
+1. The desktop file also registers mdBun for folders (`inode/directory`) so it appears under **Open With** when you right-click a folder in Dolphin. So that it never takes over opening folders, make sure your file manager stays the default: `xdg-mime default org.kde.dolphin.desktop inode/directory`, then `update-desktop-database ~/.local/share/applications`.
 
-Run in terminal with `md file.md` for whatever`file.md` you want.  
-Run in GUI by clicking the `.md` file from the file browser.
+Run in terminal with `md file.md` for whatever`file.md` you want, or `md folder` for a list of its `.md` files.  
+Run in GUI by clicking the `.md` file from the file browser, or right-click a folder and choose **Open With → mdBun**.
 
 ### Termux on Android
 
