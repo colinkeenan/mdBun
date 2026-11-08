@@ -6,9 +6,15 @@ Both `server.ts` and `package.json` were written by Claude free. I asked it to m
 
 ### Linked Markdown files
 
-Links to other `.md` files are rendered as HTML too, so a table of contents that links to one file per chapter works like a small website. Links into subfolders (`chapters/ch1.md`), back up (`../toc.md`), and to headings (`ch1.md#section-a`) all work. Only files inside the folder of the `.md` file you opened can be reached, so open the top-level file (e.g. the table of contents) rather than a chapter in a subfolder.
+Links to other `.md` files are rendered as HTML too, so a table of contents that links to one file per chapter works like a small website. Links into subfolders (`chapters/ch1.md`), back up (`../toc.md`), and to headings (`ch1.md#section-a`) all work. Only files inside the folder of a `.md` file you opened with `md` (and its subfolders) can be reached, so open the top-level file (e.g. the table of contents) rather than a chapter in a subfolder.
 
-Live reload watches that folder and its subfolders. Each page reloads only when its own file (or a non-Markdown file such as an image) changes, so editing one chapter doesn't disturb a page showing another.
+### Multiple tabs
+
+Each file gets its own address based on its full path, like `http://localhost:3000/home/me/book/toc.md`, so every tab can show a different file, from the same folder or different ones. Running `md` while the server is already running adds the file to it and opens a new tab, instead of restarting the server, so tabs that are already open keep working. The server keeps running until you stop it (e.g. `fuser -k 3000/tcp`). Restarting it means files in folders other than the one you start it with show "Not available" until you run `md` on them again.
+
+Live reload watches only the folders of files being shown. Each tab reloads only when its own file, or an image it shows, changes, so editing one chapter doesn't disturb a tab showing another.
+
+The server only listens on `127.0.0.1`, so other machines can't reach it.
 
 Whether running on Linux or Termux on Android, the first step is to simply clone this repo.
 
@@ -26,23 +32,31 @@ Run in GUI by clicking the `.md` file from the file browser.
 
 1. Give Termux permision to run over other apps and for battery usage to run in background.
 1. Ignore mdBun.destop.
-1. Edit `md` to have correct path to `mdBun` and correct launcher. (You may have to install additional apps to get `grun` and `nc` to work). Change the command that kills already running server. Here is the `md` that works for me:
+1. Edit `md` to have correct path to `mdBun` and correct launcher. (You may have to install additional apps to get `grun` and `curl` to work). Change the command that kills an old running server. Here is the `md` that works for me:
    ```bash
    #!/bin/bash
    file="$(realpath "$1")"
 
-   pkill -f server.ts
+   open_file() {
+       curl -sf --data-urlencode "path=$file" http://localhost:3000/__open
+   }
 
-   cd "$HOME/mdBun" || exit 1
+   if ! url=$(open_file); then
+       pkill -f server.ts
 
-   setsid grun "$HOME/.bun/bin/bun" run server.ts "$file" > "$HOME/mdbun.log" 2>&1 &
+       cd "$HOME/mdBun" || exit 1
 
-   while ! nc -z localhost 3000; do
-       sleep 0.1
-   done
+       setsid grun "$HOME/.bun/bin/bun" run server.ts "$file" > "$HOME/mdbun.log" 2>&1 &
 
-   cat "$HOME/mdbun.log"
-   termux-open-url "http://localhost:3000"
+       for _ in {1..100}; do
+           url=$(open_file) && break
+           sleep 0.1
+       done
+       cat "$HOME/mdbun.log"
+       [ -n "$url" ] || exit 1
+   fi
+
+   termux-open-url "$url"
    ```
 1. Execute the following commands in Termux:
    ```bash

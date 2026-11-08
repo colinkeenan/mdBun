@@ -1,5 +1,5 @@
 import { watch } from "node:fs";
-import { basename, dirname, extname, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
 // GitHub's emoji shortcodes (":tada:" -> 🎉), generated from the gemoji database.
 import emojiMap from "./emojis.json";
 
@@ -22,7 +22,6 @@ if (!(await Bun.file(FILE).exists())) {
   process.exit(1);
 }
 
-const DIR = dirname(FILE);
 const PORT = Number(process.env.PORT ?? 3000);
 
 const CSS = `
@@ -183,9 +182,14 @@ const liveHead = (self: string) => `
       let dropped = false;
       const es = new EventSource("/__reload");
       es.addEventListener("reload", async (e) => {
-        // A change to another Markdown file (e.g. a different chapter) doesn't affect this page.
+        // Reload only for this page's own file, or for a file it embeds (an image).
+        // Other tabs may be showing other files; their changes don't concern this page.
         const changed = e.data;
-        if (/\\.(md|markdown)$/i.test(changed) && changed !== SELF) return;
+        const uses = (el) => {
+          try { return decodeURIComponent(new URL(el.src || el.href).pathname) === changed; }
+          catch { return false; }
+        };
+        if (changed !== SELF && ![...document.querySelectorAll("[src], link[href]")].some(uses)) return;
         try {
           sessionStorage.setItem(SCROLL, String(scrollY));
           const res = await fetch(location.pathname, { cache: "no-store" });
@@ -219,28 +223,37 @@ function broadcast(message: string) {
   }
 }
 
-if (LIVE_RELOAD) {
-  // Watch the folder rather than the file: many editors save by writing a temp file and
-  // renaming it over the original, which a watcher on the file itself would lose track of.
-  // Edits are debounced so one save triggers one reload.
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  // Recursive, so linked files in subfolders (chapters/, images/) are watched too. The changed
-  // path is sent along so a page only reloads for its own file (or a non-Markdown asset).
-  let changed = new Set<string>();
-  watch(DIR, { recursive: true }, (_event, name) => {
-    if (!name) return;
-    const rel = String(name).split(sep).join("/");
-    if (rel.split("/").some((part) => part.startsWith(".")) || /(~|\.sw[a-p]|\.tmp)$/.test(rel)) return;
-    changed.add(rel);
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      for (const path of changed) broadcast(`event: reload\ndata: ${path}\n\n`);
-      changed = new Set();
-    }, 100);
-  });
-  // Keep idle connections alive through proxies and browsers.
-  setInterval(() => broadcast(": ping\n\n"), 15_000);
+// Watch the folder of every file that has been served (the Markdown pages and their images),
+// and nothing else, so opening ~/notes.md doesn't watch the whole home directory. Folders
+// rather than files: many editors save by writing a temp file and renaming it over the
+// original, which a watcher on the file itself would lose track of. Edits are debounced so
+// one save triggers one reload, and the changed file's path is sent so each tab can decide
+// whether the change concerns it.
+const watched = new Set<string>();
+let pending = new Set<string>();
+let timer: ReturnType<typeof setTimeout> | undefined;
+
+function watchFolderOf(file: string) {
+  const dir = dirname(file);
+  if (!LIVE_RELOAD || watched.has(dir)) return;
+  watched.add(dir);
+  try {
+    watch(dir, (_event, name) => {
+      if (!name || name.startsWith(".") || /(~|\.sw[a-p]|\.tmp)$/.test(name)) return;
+      pending.add(join(dir, String(name)));
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        for (const path of pending) broadcast(`event: reload\ndata: ${path}\n\n`);
+        pending = new Set();
+      }, 100);
+    });
+  } catch (err) {
+    console.error(`Can't watch ${dir}:`, err);
+  }
 }
+
+// Keep idle connections alive through proxies and browsers.
+if (LIVE_RELOAD) setInterval(() => broadcast(": ping\n\n"), 15_000);
 
 const escapeHtml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -463,11 +476,25 @@ async function renderFile(path: string) {
   return page(title, body, {
     math: stash.length > 0,
     code: html.includes('<code class="language-'),
-    live: LIVE_RELOAD ? relative(DIR, path).split(sep).join("/") : undefined,
+    live: LIVE_RELOAD ? path : undefined,
   });
 }
 
-/** Resolve a URL path inside the file's directory, refusing anything that escapes it. */
+// One server shows any number of files, each in its own tab. A page's URL is the file's
+// absolute path (http://localhost:3000/home/me/book/toc.md), so relative links between files
+// just work. Only folders that were opened explicitly (the file given at startup, plus any
+// added later through /__open by the `md` script) and their subfolders can be served.
+const roots = new Set<string>();
+let lastOpened = FILE;
+
+function open(file: string) {
+  roots.add(dirname(file));
+  lastOpened = file;
+}
+
+const urlPath = (file: string) => file.split(sep).map(encodeURIComponent).join("/");
+
+/** Map a URL path to a file inside an opened folder, or null if it is outside all of them. */
 function safePath(pathname: string): string | null {
   let decoded: string;
   try {
@@ -476,9 +503,14 @@ function safePath(pathname: string): string | null {
     return null;
   }
   if (decoded.includes("\0")) return null;
-  const full = resolve(DIR, "." + decoded);
-  return full.startsWith(DIR + sep) ? full : null;
+  const full = resolve("/", "." + decoded);
+  for (const root of roots) if (full.startsWith(root + sep)) return full;
+  return null;
 }
+
+// Only answer requests addressed to this machine by name, which defeats DNS rebinding (a web
+// page pointing its own hostname at 127.0.0.1 to read local files).
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function reloadStream(): Response {
   let self: ReadableStreamDefaultController<Uint8Array>;
@@ -497,24 +529,54 @@ function reloadStream(): Response {
   });
 }
 
+open(FILE);
+
 const server = Bun.serve({
   port: PORT,
+  hostname: "127.0.0.1", // never reachable from other machines
   idleTimeout: 0, // the live-reload stream stays open indefinitely
   async fetch(req) {
+    const url = new URL(req.url);
+    const { pathname } = url;
+    if (!LOCAL_HOSTS.has(url.hostname)) return new Response("Forbidden", { status: 403 });
+
+    // `md` adds a file here and gets back its URL. Browsers always send an Origin header with
+    // a POST and curl doesn't, so refusing one stops web pages from adding folders.
+    if (pathname === "/__open") {
+      if (req.method !== "POST" || req.headers.has("origin")) {
+        return new Response("Forbidden", { status: 403 });
+      }
+      const path = new URLSearchParams(await req.text()).get("path") ?? "";
+      const file = Bun.file(path);
+      if (!path.startsWith("/") || !(await file.exists())) {
+        return new Response(`File not found: ${path}\n`, { status: 404 });
+      }
+      const full = resolve(path);
+      open(full);
+      console.log(`Opened ${full}`);
+      return new Response(`http://localhost:${server.port}${urlPath(full)}\n`);
+    }
+
     if (req.method !== "GET" && req.method !== "HEAD") {
       return new Response("Method not allowed", { status: 405 });
     }
-
-    const { pathname } = new URL(req.url);
-    if (pathname === "/") return renderFile(FILE);
+    if (pathname === "/") return Response.redirect(urlPath(lastOpened), 302);
     if (LIVE_RELOAD && pathname === "/__reload") return reloadStream();
 
-    // Serve sibling files (images etc.) referenced by relative links in the Markdown.
+    // Serve files (Markdown and images etc.) from the opened folders.
     const target = safePath(pathname);
-    if (!target) return new Response("Bad request", { status: 400 });
+    if (!target) {
+      return page(
+        "Not available",
+        "<h1>Not available</h1><p>This file isn't in a folder opened with <code>md</code>. " +
+          "Run <code>md</code> on it (or on a file in a folder above it) to view it.</p>",
+        { status: 404 },
+      );
+    }
 
     const file = Bun.file(target);
     if (await file.exists()) {
+      watchFolderOf(target);
       // Linked Markdown files (e.g. TOC -> chapter) are rendered too, not sent as raw text.
       if (/\.(md|markdown)$/i.test(target)) return renderFile(target);
       return new Response(file);
@@ -528,4 +590,4 @@ const server = Bun.serve({
   },
 });
 
-console.log(`Serving ${FILE} at http://localhost:${server.port}`);
+console.log(`Serving ${FILE} at http://localhost:${server.port}${urlPath(FILE)}`);
