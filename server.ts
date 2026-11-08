@@ -1,5 +1,5 @@
 import { watch } from "node:fs";
-import { basename, dirname, resolve, sep } from "node:path";
+import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 // GitHub's emoji shortcodes (":tada:" -> 🎉), generated from the gemoji database.
 import emojiMap from "./emojis.json";
 
@@ -121,9 +121,10 @@ const HLJS_HEAD = `
 // trees to the first element that differs (descending into lists, tables, quotes, alerts, etc.
 // so a one-line edit in a long list points at that item, not the whole list). After the reload
 // that element is scrolled into view if it is off-screen, and flashed briefly.
-const LIVE_HEAD = `
+const liveHead = (self: string) => `
   <script>
     (() => {
+      const SELF = ${JSON.stringify(self).replace(/</g, "\\u003c")};
       const SCROLL = "md-live-scroll", TARGET = "md-live-target";
       const CONTAINERS = new Set(["UL", "OL", "TABLE", "THEAD", "TBODY", "BLOCKQUOTE", "DETAILS", "DIV", "SECTION"]);
 
@@ -181,10 +182,13 @@ const LIVE_HEAD = `
 
       let dropped = false;
       const es = new EventSource("/__reload");
-      es.addEventListener("reload", async () => {
+      es.addEventListener("reload", async (e) => {
+        // A change to another Markdown file (e.g. a different chapter) doesn't affect this page.
+        const changed = e.data;
+        if (/\\.(md|markdown)$/i.test(changed) && changed !== SELF) return;
         try {
           sessionStorage.setItem(SCROLL, String(scrollY));
-          const res = await fetch("/", { cache: "no-store" });
+          const res = await fetch(location.pathname, { cache: "no-store" });
           if (res.ok && pristine) {
             const next = new DOMParser().parseFromString(await res.text(), "text/html");
             const path = firstDiff(pristine, next.body);
@@ -220,10 +224,19 @@ if (LIVE_RELOAD) {
   // renaming it over the original, which a watcher on the file itself would lose track of.
   // Edits are debounced so one save triggers one reload.
   let timer: ReturnType<typeof setTimeout> | undefined;
-  watch(DIR, (_event, name) => {
-    if (!name || name.startsWith(".") || /(~|\.sw[a-p]|\.tmp)$/.test(name)) return;
+  // Recursive, so linked files in subfolders (chapters/, images/) are watched too. The changed
+  // path is sent along so a page only reloads for its own file (or a non-Markdown asset).
+  let changed = new Set<string>();
+  watch(DIR, { recursive: true }, (_event, name) => {
+    if (!name) return;
+    const rel = String(name).split(sep).join("/");
+    if (rel.split("/").some((part) => part.startsWith(".")) || /(~|\.sw[a-p]|\.tmp)$/.test(rel)) return;
+    changed.add(rel);
     clearTimeout(timer);
-    timer = setTimeout(() => broadcast("event: reload\ndata: now\n\n"), 100);
+    timer = setTimeout(() => {
+      for (const path of changed) broadcast(`event: reload\ndata: ${path}\n\n`);
+      changed = new Set();
+    }, 100);
   });
   // Keep idle connections alive through proxies and browsers.
   setInterval(() => broadcast(": ping\n\n"), 15_000);
@@ -235,7 +248,7 @@ const escapeHtml = (s: string) =>
 function page(
   title: string,
   body: string,
-  opts: { status?: number; math?: boolean; code?: boolean; live?: boolean } = {},
+  opts: { status?: number; math?: boolean; code?: boolean; live?: string } = {},
 ) {
   const html = `<!doctype html>
 <html lang="en">
@@ -243,7 +256,7 @@ function page(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
-  <style>${CSS}</style>${opts.live ? LIVE_HEAD : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
+  <style>${CSS}</style>${opts.live ? liveHead(opts.live) : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
 </head>
 <body>
 ${body}
@@ -438,10 +451,10 @@ function emojify(html: string): string {
 }
 
 // Re-read the file on every request so edits show up on refresh.
-async function renderFile() {
-  const source = await Bun.file(FILE).text();
+async function renderFile(path: string) {
+  const source = await Bun.file(path).text();
   const title = replaceShortcodes(
-    source.match(/^#\s+(.+)$/m)?.[1] ?? basename(FILE, ".md"),
+    source.match(/^#\s+(.+)$/m)?.[1] ?? basename(path, extname(path)),
   );
   const { text: mathFree, stash } = protectMath(source);
   const { text, section } = extractFootnotes(mathFree);
@@ -450,7 +463,7 @@ async function renderFile() {
   return page(title, body, {
     math: stash.length > 0,
     code: html.includes('<code class="language-'),
-    live: LIVE_RELOAD,
+    live: LIVE_RELOAD ? relative(DIR, path).split(sep).join("/") : undefined,
   });
 }
 
@@ -493,7 +506,7 @@ const server = Bun.serve({
     }
 
     const { pathname } = new URL(req.url);
-    if (pathname === "/") return renderFile();
+    if (pathname === "/") return renderFile(FILE);
     if (LIVE_RELOAD && pathname === "/__reload") return reloadStream();
 
     // Serve sibling files (images etc.) referenced by relative links in the Markdown.
@@ -501,7 +514,11 @@ const server = Bun.serve({
     if (!target) return new Response("Bad request", { status: 400 });
 
     const file = Bun.file(target);
-    if (await file.exists()) return new Response(file);
+    if (await file.exists()) {
+      // Linked Markdown files (e.g. TOC -> chapter) are rendered too, not sent as raw text.
+      if (/\.(md|markdown)$/i.test(target)) return renderFile(target);
+      return new Response(file);
+    }
 
     return page("Not found", "<h1>404</h1><p>Page not found.</p>", { status: 404 });
   },
