@@ -121,8 +121,21 @@ const CSS = `
   .browse .listing { margin: 0.4rem 0 0; padding: 0 1rem 1rem; overflow-y: auto; }
   .browse .count { margin-left: 0.5rem; font-variant-numeric: tabular-nums; }
   .browse .back { font-style: italic; }
-  /* The search term in the page a search result opened. */
-  ::highlight(md-find) { background-color: #ffd33d; color: #000; }
+  /* Find bar, opened on the page a search result leads to. */
+  .find-bar { position: fixed; bottom: 0.8rem; left: 50%; transform: translateX(-50%);
+              display: flex; align-items: center; gap: 0.3rem; padding: 0.4rem 0.5rem;
+              width: max-content; max-width: calc(100vw - 2rem); box-sizing: border-box;
+              background: Canvas; border: 1px solid #8885; border-radius: 8px;
+              box-shadow: 0 2px 10px #0003; }
+  .find-bar input { width: 12rem; min-width: 0; flex: 1 1 auto; font: inherit; padding: 0.2rem 0.4rem; }
+  .find-bar .find-count { color: #888; white-space: nowrap; font-variant-numeric: tabular-nums;
+                          min-width: 4.5em; text-align: center; }
+  .find-bar button { border: none; background: none; color: inherit; cursor: pointer;
+                     font-size: 1rem; padding: 0.2rem 0.4rem; border-radius: 4px; }
+  .find-bar button:hover { background: #8883; }
+  @media print { .find-bar { display: none; } }
+  ::highlight(md-find) { background-color: #ffd33d88; }
+  ::highlight(md-find-current) { background-color: #ff9632; color: #000; }
   .alert { border-left: 4px solid var(--c); padding: 0.1rem 1rem; margin: 1rem 0; }
   .alert > :last-child { margin-bottom: 0.6rem; }
   .alert-note { --c: var(--a-note); }
@@ -365,7 +378,7 @@ const THEME_HEAD = `
 // page's folder. Folders open in the dialog; files open in the tab. Search looks through every
 // Markdown file in the folder shown and the folders below it, and lists those that match with
 // how many times. A result's link carries the search as "?find=", and the page it opens
-// scrolls to the first match, flashes its paragraph, and highlights the words until a click.
+// shows a find bar for stepping through every match in it.
 //
 // String.raw keeps the regular expressions' backslashes as written. The script must not use
 // "${" or backticks, since it sits inside a template literal.
@@ -376,49 +389,108 @@ const BROWSE_HEAD = String.raw`
         q.trim().split(/\s+/).map((w) => w.replace(/[.*+?^$\{}()|[\]\\]/g, "\\$&")).join("\\s+"), "i");
 
       // ?find= : take it out of the address (so a reload doesn't jump again) and, once the
-      // page has finished laying out (KaTeX changes its height), find the first match.
+      // page has finished laying out (KaTeX changes its height), open the find bar on it.
       const params = new URLSearchParams(location.search);
       const find = params.get("find");
       if (find && find.trim()) {
         params.delete("find");
         const rest = params.toString();
         history.replaceState(history.state, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
-        addEventListener("load", () => flashText(find));
+        addEventListener("load", () => findBar(find));
       }
 
-      // The page's visible text, as one string, with where each text node starts in it, so a
-      // match that spans <em> or a link can still be found.
-      function flashText(q) {
+      // Every match in the page's visible text. The text is read as one string, with where
+      // each text node starts in it, so a match that spans <em> or a link is still found.
+      function findAll(q) {
         const nodes = [];
         let text = "";
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
           acceptNode: (n) => n.parentElement && !n.parentElement.closest(
-            "script, style, dialog, button, .katex-mathml") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+            "script, style, dialog, button, .find-bar, .katex-mathml") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
         });
         for (let n; (n = walker.nextNode()); ) { nodes.push([n, text.length]); text += n.data; }
-        const m = pattern(q).exec(text);
-        if (!m) return;
         const locate = (pos, isEnd) => {
           for (let i = nodes.length - 1; i >= 0; i--) {
             const [n, start] = nodes[i];
             if (isEnd ? start < pos : start <= pos && pos < start + n.data.length) return [n, pos - start];
           }
         };
-        const range = document.createRange();
-        range.setStart(...locate(m.index, false));
-        range.setEnd(...locate(m.index + m[0].length, true));
-
-        const first = range.startContainer.parentElement;
-        const block = first.closest("p, li, h1, h2, h3, h4, h5, h6, td, th, pre, blockquote, dt, dd, figcaption, summary") || first;
-        const r = range.getBoundingClientRect();
-        scrollBy(0, r.top - innerHeight / 2 + r.height / 2);
-        block.classList.remove("md-flash");
-        void block.offsetWidth;
-        block.classList.add("md-flash");
-        if (window.Highlight && CSS.highlights) {
-          CSS.highlights.set("md-find", new Highlight(range));
-          addEventListener("pointerdown", () => CSS.highlights.delete("md-find"), { once: true });
+        const ranges = [];
+        if (!q.trim()) return ranges;
+        const re = new RegExp(pattern(q).source, "gi");
+        for (const m of text.matchAll(re)) {
+          const range = document.createRange();
+          range.setStart(...locate(m.index, false));
+          range.setEnd(...locate(m.index + m[0].length, true));
+          ranges.push(range);
         }
+        return ranges;
+      }
+
+      // A find bar like the browser's own (which a page can't open): every match highlighted,
+      // the current one brighter, its paragraph flashed and scrolled to the middle of the
+      // window. Enter / Shift+Enter or the arrows move between matches; Esc or ✕ closes it.
+      function findBar(q) {
+        const bar = document.createElement("form");
+        bar.className = "find-bar";
+        bar.setAttribute("role", "search");
+        bar.innerHTML =
+          '<input type="search" aria-label="Find in page">' +
+          '<span class="find-count" aria-live="polite"></span>' +
+          '<button type="button" class="find-prev" aria-label="Previous match" title="Previous (Shift+Enter)">▲</button>' +
+          '<button type="button" class="find-next" aria-label="Next match" title="Next (Enter)">▼</button>' +
+          '<button type="button" class="find-close" aria-label="Close" title="Close (Esc)">✕</button>';
+        document.body.append(bar);
+        const input = bar.querySelector("input");
+        const count = bar.querySelector(".find-count");
+        input.value = q;
+        const canHighlight = !!(window.Highlight && CSS.highlights);
+        let ranges = [], at = -1;
+
+        function show(i) {
+          if (!ranges.length) return;
+          at = (i + ranges.length) % ranges.length;
+          const range = ranges[at];
+          count.textContent = (at + 1) + " of " + ranges.length;
+          if (canHighlight) {
+            const current = new Highlight(range);
+            current.priority = 1;
+            CSS.highlights.set("md-find-current", current);
+          }
+          const first = range.startContainer.parentElement;
+          const block = first.closest("p, li, h1, h2, h3, h4, h5, h6, td, th, pre, blockquote, dt, dd, figcaption, summary") || first;
+          const r = range.getBoundingClientRect();
+          scrollBy(0, r.top - innerHeight / 2 + r.height / 2);
+          block.classList.remove("md-flash");
+          void block.offsetWidth;
+          block.classList.add("md-flash");
+        }
+        function search() {
+          ranges = findAll(input.value);
+          at = -1;
+          if (canHighlight) {
+            CSS.highlights.set("md-find", new Highlight(...ranges));
+            CSS.highlights.delete("md-find-current");
+          }
+          count.textContent = input.value.trim() ? (ranges.length ? "" : "No matches") : "";
+          show(0);
+        }
+        function close() {
+          if (canHighlight) { CSS.highlights.delete("md-find"); CSS.highlights.delete("md-find-current"); }
+          bar.remove();
+        }
+        bar.addEventListener("submit", (e) => e.preventDefault());
+        input.addEventListener("input", search);
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") { e.preventDefault(); show(at + (e.shiftKey ? -1 : 1)); }
+        });
+        bar.querySelector(".find-prev").addEventListener("click", () => show(at - 1));
+        bar.querySelector(".find-next").addEventListener("click", () => show(at + 1));
+        bar.querySelector(".find-close").addEventListener("click", close);
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape" && bar.isConnected && !document.querySelector("dialog[open]")) close();
+        });
+        search();
       }
 
       document.addEventListener("DOMContentLoaded", () => {
