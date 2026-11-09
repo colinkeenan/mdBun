@@ -1,6 +1,6 @@
 import { watch } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { basename, dirname, extname, join, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 // GitHub's emoji shortcodes (":tada:" -> 🎉), generated from the gemoji database.
 import emojiMap from "./emojis.json";
 
@@ -87,16 +87,42 @@ const CSS = `
 
   /* Light/dark toggle. Its icon comes from CSS so the button's HTML never changes, which
      keeps live reload's comparison of old and new pages from seeing a difference in it. */
-  .theme-toggle { position: fixed; top: 0.6rem; right: 0.6rem; width: 2.2rem; height: 2.2rem;
+  .theme-toggle, .browse-toggle {
+                  position: fixed; top: 0.6rem; right: 0.6rem; width: 2.2rem; height: 2.2rem;
                   border: 1px solid #8885; border-radius: 50%; background: Canvas; cursor: pointer;
                   font-size: 1.1rem; line-height: 1; padding: 0; opacity: 0.6; }
-  .theme-toggle:hover, .theme-toggle:focus-visible { opacity: 1; }
+  .theme-toggle:hover, .theme-toggle:focus-visible,
+  .browse-toggle:hover, .browse-toggle:focus-visible { opacity: 1; }
+  .browse-toggle { right: 3.2rem; }
+  .browse-toggle::before { content: "📂"; }
   .theme-toggle::before { content: "🌙"; }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .theme-toggle::before { content: "☀️"; }
   }
   :root[data-theme="dark"] .theme-toggle::before { content: "☀️"; }
-  @media print { .theme-toggle { display: none; } }
+  @media print { .theme-toggle, .browse-toggle { display: none; } }
+
+  /* Browse and search dialog */
+  .browse { width: min(40rem, calc(100vw - 2rem)); max-height: min(40rem, calc(100vh - 2rem));
+            padding: 0; border: 1px solid #8885; border-radius: 8px;
+            background: Canvas; color: CanvasText; }
+  .browse[open] { display: flex; flex-direction: column; }
+  .browse::backdrop { background: #0006; }
+  .browse-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 1rem;
+                 border-bottom: 1px solid #8883; }
+  .browse-where { flex: 1; margin: 0; font-size: 1.05rem; overflow-wrap: anywhere; }
+  .browse-close { border: none; background: none; color: inherit; font-size: 1.1rem;
+                  cursor: pointer; padding: 0.2rem 0.4rem; }
+  .browse-search { display: flex; gap: 0.5rem; padding: 0.6rem 1rem 0; }
+  .browse-search input { flex: 1; min-width: 0; font: inherit; padding: 0.3rem 0.5rem; }
+  .browse-search button { font: inherit; padding: 0.3rem 0.8rem; cursor: pointer; }
+  .browse-status { margin: 0.6rem 1rem 0; color: #888; }
+  .browse-status:empty { display: none; }
+  .browse .listing { margin: 0.4rem 0 0; padding: 0 1rem 1rem; overflow-y: auto; }
+  .browse .count { margin-left: 0.5rem; font-variant-numeric: tabular-nums; }
+  .browse .back { font-style: italic; }
+  /* The search term in the page a search result opened. */
+  ::highlight(md-find) { background-color: #ffd33d; color: #000; }
   .alert { border-left: 4px solid var(--c); padding: 0.1rem 1rem; margin: 1rem 0; }
   .alert > :last-child { margin-bottom: 0.6rem; }
   .alert-note { --c: var(--a-note); }
@@ -335,6 +361,172 @@ const THEME_HEAD = `
     })();
   </script>`;
 
+// Browse and search. The 📂 button opens a dialog listing the Markdown files and folders in the
+// page's folder. Folders open in the dialog; files open in the tab. Search looks through every
+// Markdown file in the folder shown and the folders below it, and lists those that match with
+// how many times. A result's link carries the search as "?find=", and the page it opens
+// scrolls to the first match, flashes its paragraph, and highlights the words until a click.
+//
+// String.raw keeps the regular expressions' backslashes as written. The script must not use
+// "${" or backticks, since it sits inside a template literal.
+const BROWSE_HEAD = String.raw`
+  <script>
+    (() => {
+      const pattern = (q) => new RegExp(
+        q.trim().split(/\s+/).map((w) => w.replace(/[.*+?^$\{}()|[\]\\]/g, "\\$&")).join("\\s+"), "i");
+
+      // ?find= : take it out of the address (so a reload doesn't jump again) and, once the
+      // page has finished laying out (KaTeX changes its height), find the first match.
+      const params = new URLSearchParams(location.search);
+      const find = params.get("find");
+      if (find && find.trim()) {
+        params.delete("find");
+        const rest = params.toString();
+        history.replaceState(history.state, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
+        addEventListener("load", () => flashText(find));
+      }
+
+      // The page's visible text, as one string, with where each text node starts in it, so a
+      // match that spans <em> or a link can still be found.
+      function flashText(q) {
+        const nodes = [];
+        let text = "";
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+          acceptNode: (n) => n.parentElement && !n.parentElement.closest(
+            "script, style, dialog, button, .katex-mathml") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+        });
+        for (let n; (n = walker.nextNode()); ) { nodes.push([n, text.length]); text += n.data; }
+        const m = pattern(q).exec(text);
+        if (!m) return;
+        const locate = (pos, isEnd) => {
+          for (let i = nodes.length - 1; i >= 0; i--) {
+            const [n, start] = nodes[i];
+            if (isEnd ? start < pos : start <= pos && pos < start + n.data.length) return [n, pos - start];
+          }
+        };
+        const range = document.createRange();
+        range.setStart(...locate(m.index, false));
+        range.setEnd(...locate(m.index + m[0].length, true));
+
+        const first = range.startContainer.parentElement;
+        const block = first.closest("p, li, h1, h2, h3, h4, h5, h6, td, th, pre, blockquote, dt, dd, figcaption, summary") || first;
+        const r = range.getBoundingClientRect();
+        scrollBy(0, r.top - innerHeight / 2 + r.height / 2);
+        block.classList.remove("md-flash");
+        void block.offsetWidth;
+        block.classList.add("md-flash");
+        if (window.Highlight && CSS.highlights) {
+          CSS.highlights.set("md-find", new Highlight(range));
+          addEventListener("pointerdown", () => CSS.highlights.delete("md-find"), { once: true });
+        }
+      }
+
+      document.addEventListener("DOMContentLoaded", () => {
+        const button = document.querySelector(".browse-toggle");
+        const dialog = document.querySelector("dialog.browse");
+        if (!button || !dialog) return;
+        const where = dialog.querySelector(".browse-where");
+        const status = dialog.querySelector(".browse-status");
+        const list = dialog.querySelector(".listing");
+        const form = dialog.querySelector(".browse-search");
+        const input = form.elements.q;
+        let folder = null; // the folder on show: { name, path, dir }
+        let request = 0;   // answers to older requests are ignored
+
+        // A link; a plain click runs onOpen instead of following it, but middle- and
+        // ctrl-clicks still open it in a new tab.
+        function item(label, href, onOpen, ...extras) {
+          const li = document.createElement("li");
+          const a = document.createElement("a");
+          a.href = href;
+          a.textContent = label;
+          if (onOpen) a.addEventListener("click", (e) => {
+            if (e.button || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            onOpen();
+          });
+          li.append(a);
+          for (const [cls, text] of extras) {
+            if (!text) continue;
+            const span = document.createElement("span");
+            span.className = cls;
+            span.textContent = text;
+            li.append(span);
+          }
+          return li;
+        }
+
+        async function get(url) {
+          const id = ++request;
+          const res = await fetch(url, { cache: "no-store" });
+          const data = res.ok ? await res.json() : null;
+          return id === request ? { data } : null;
+        }
+
+        async function show(dir) {
+          status.textContent = "Loading…";
+          const got = await get("/__browse?dir=" + encodeURIComponent(dir)).catch(() => ({ data: null }));
+          if (!got) return;
+          const d = got.data;
+          if (!d) { status.textContent = "This folder can't be shown."; return; }
+          folder = d;
+          where.textContent = "📁 " + d.name;
+          where.title = d.path;
+          const items = [];
+          if (d.parent) items.push(item("../", d.parent, () => show(d.parent)));
+          for (const f of d.folders) items.push(item(f.name + "/", f.href, () => show(f.href)));
+          for (const f of d.files) items.push(item(f.name, f.href, null, ["doc-title", f.title !== f.name && f.title]));
+          list.replaceChildren(...items);
+          list.scrollTop = 0;
+          status.textContent = d.folders.length + d.files.length ? "" : "No Markdown files or folders here.";
+        }
+
+        form.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const q = input.value.trim();
+          if (!folder) return;
+          if (!q) return show(folder.dir);
+          status.textContent = "Searching…";
+          list.replaceChildren();
+          const url = "/__search?dir=" + encodeURIComponent(folder.dir) + "&q=" + encodeURIComponent(q);
+          const got = await get(url).catch(() => ({ data: null }));
+          if (!got) return;
+          const d = got.data;
+          if (!d) { status.textContent = "The search failed."; return; }
+          const matches = d.results.reduce((sum, r) => sum + r.count, 0);
+          const plural = (n, one, many) => n + " " + (n === 1 ? one : many);
+          status.textContent = d.results.length
+            ? plural(matches, "match", "matches") + " in " + plural(d.results.length, "file", "files") + " (of " + d.searched + " searched)"
+            : "No matches in " + plural(d.searched, "file", "files") + ".";
+          if (d.limited) status.textContent += " Only the first " + d.searched + " files were searched.";
+          const back = item("← Back to " + folder.name, folder.dir, () => show(folder.dir));
+          back.className = "back";
+          list.replaceChildren(back, ...d.results.map((r) =>
+            item(r.name, r.href + "?find=" + encodeURIComponent(q), null,
+              ["count", "(" + r.count + ")"], ["doc-title", r.title])));
+          list.scrollTop = 0;
+        });
+
+        button.addEventListener("click", () => {
+          if (!folder) show(button.dataset.dir);
+          dialog.showModal();
+        });
+        dialog.querySelector(".browse-close").addEventListener("click", () => dialog.close());
+        // A click on the dimmed page around the dialog closes it.
+        dialog.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); });
+      });
+    })();
+  </script>`;
+
+const browseDialog = (dir: string) => `<button class="browse-toggle" type="button" data-dir="${escapeHtml(dir)}" aria-label="Browse and search Markdown files" title="Browse and search Markdown files"></button>
+<dialog class="browse" aria-label="Browse Markdown files">
+  <div class="browse-head"><h2 class="browse-where">📁</h2><button class="browse-close" type="button" aria-label="Close">✕</button></div>
+  <form class="browse-search" role="search"><input type="search" name="q" placeholder="Search this folder and below" aria-label="Search"><button type="submit">Search</button></form>
+  <p class="browse-status"></p>
+  <ul class="listing"></ul>
+</dialog>
+`;
+
 const clients = new Set<ReadableStreamDefaultController<Uint8Array>>();
 const encoder = new TextEncoder();
 
@@ -387,7 +579,15 @@ const escapeHtml = (s: string) =>
 function page(
   title: string,
   body: string,
-  opts: { status?: number; math?: boolean; code?: boolean; live?: string; dir?: boolean } = {},
+  opts: {
+    status?: number;
+    math?: boolean;
+    code?: boolean;
+    live?: string;
+    dir?: boolean;
+    /** Show the browse button, starting in this folder (a URL ending in "/"). */
+    browse?: string;
+  } = {},
 ) {
   const html = `<!doctype html>
 <html lang="en">
@@ -395,11 +595,11 @@ function page(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
-  <style>${CSS}</style>${THEME_HEAD}${opts.live ? liveHead(opts.live, opts.dir) : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
+  <style>${CSS}</style>${THEME_HEAD}${opts.live ? liveHead(opts.live, opts.dir) : ""}${opts.browse ? BROWSE_HEAD : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
 </head>
 <body>
 ${body}
-<button class="theme-toggle" type="button" aria-label="Switch between light and dark" title="Switch between light and dark"></button>
+${opts.browse ? browseDialog(opts.browse) : ""}<button class="theme-toggle" type="button" aria-label="Switch between light and dark" title="Switch between light and dark"></button>
 </body>
 </html>`;
   return new Response(html, {
@@ -590,20 +790,30 @@ function emojify(html: string): string {
   );
 }
 
+/** Markdown source to the HTML of a page's body. */
+function renderMarkdown(source: string) {
+  const { text: mathFree, stash } = protectMath(source);
+  const { text, section } = extractFootnotes(mathFree);
+  const html = Bun.markdown.html(text, MD_OPTIONS) + (section ? "\n" + section : "");
+  return {
+    body: emojify(renderAlerts(restoreMath(html, stash))),
+    math: stash.length > 0,
+    code: html.includes('<code class="language-'),
+  };
+}
+
 // Re-read the file on every request so edits show up on refresh.
 async function renderFile(path: string) {
   const source = await Bun.file(path).text();
   const title = replaceShortcodes(
     source.match(/^#\s+(.+)$/m)?.[1] ?? basename(path, extname(path)),
   );
-  const { text: mathFree, stash } = protectMath(source);
-  const { text, section } = extractFootnotes(mathFree);
-  const html = Bun.markdown.html(text, MD_OPTIONS) + (section ? "\n" + section : "");
-  const body = emojify(renderAlerts(restoreMath(html, stash)));
+  const { body, math, code } = renderMarkdown(source);
   return page(title, body, {
-    math: stash.length > 0,
-    code: html.includes('<code class="language-'),
+    math,
+    code,
     live: LIVE_RELOAD ? path : undefined,
+    browse: dirUrl(dirname(path)),
   });
 }
 
@@ -620,39 +830,78 @@ async function headingOf(path: string): Promise<string> {
   }
 }
 
-/** Does this folder directly contain a Markdown file? */
+/**
+ * Is there a Markdown file in this folder or any folder below it? Looks one level at a time,
+ * so a nearby file is found without walking the whole tree. Skips what search skips (hidden
+ * folders, node_modules, symlinked folders). A huge tree is assumed to have some Markdown
+ * rather than walked to the end.
+ */
+const MAX_FOLDERS_CHECKED = 2000;
+
 async function hasMarkdown(dir: string): Promise<boolean> {
-  try {
-    return (await readdir(dir)).some((n) => !n.startsWith(".") && MD_FILE.test(n));
-  } catch {
-    return false;
+  let level = [dir];
+  let checked = 0;
+  while (level.length) {
+    const next: string[] = [];
+    for (const d of level) {
+      if (++checked > MAX_FOLDERS_CHECKED) return true;
+      let entries;
+      try {
+        entries = await readdir(d, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const e of entries) {
+        if (e.name.startsWith(".")) continue;
+        if (MD_FILE.test(e.name) && !e.isDirectory()) return true;
+        if (e.isDirectory() && e.name !== "node_modules") next.push(join(d, e.name));
+      }
+    }
+    level = next;
   }
+  return false;
 }
 
-// A folder is shown as a list of links to its Markdown files (with each file's title, if it
-// has one) and to its subfolders that contain Markdown. Its URL ends in "/", so the links are
-// just the names. Sorted so "chapter2" comes before "chapter10".
-async function renderDir(dir: string) {
+/**
+ * The Markdown files directly inside a folder, and its subfolders that have Markdown somewhere
+ * inside them, sorted so "chapter2" comes before "chapter10".
+ */
+async function listDir(dir: string) {
   const entries = (await readdir(dir, { withFileTypes: true }))
     .filter((e) => !e.name.startsWith("."))
     .sort((a, b) => byName(a.name, b.name));
   const folders: string[] = [];
   const files: string[] = [];
+  const subfolders: string[] = [];
   for (const e of entries) {
     const full = join(dir, e.name);
     // Follow symlinks: stat says what they point at.
     const kind = e.isSymbolicLink() ? await kindOf(full) : e.isDirectory() ? "dir" : "file";
-    if (kind === "dir" && (await hasMarkdown(full))) folders.push(e.name);
+    if (kind === "dir") subfolders.push(e.name);
     else if (kind === "file" && MD_FILE.test(e.name)) files.push(e.name);
   }
+  const keep = await Promise.all(subfolders.map((n) => hasMarkdown(join(dir, n))));
+  folders.push(...subfolders.filter((_, i) => keep[i]));
   const titles = await Promise.all(files.map((n) => headingOf(join(dir, n))));
+  return { folders, files, titles };
+}
+
+/** The folder above, if it can be served too. */
+const parentOf = (dir: string) =>
+  dirname(dir) !== dir && isServable(dirname(dir)) ? dirname(dir) : null;
+
+// A folder is shown as a list of links to its Markdown files (with each file's title, if it
+// has one) and to its subfolders that have Markdown somewhere inside them. Its URL ends in "/", so the links are
+// just the names.
+async function renderDir(dir: string) {
+  const { folders, files, titles } = await listDir(dir);
 
   const link = (name: string, href: string, title = "") =>
     `<li><a href="${escapeHtml(href)}">${escapeHtml(name)}</a>` +
     (title && title !== name ? `<span class="doc-title">${escapeHtml(title)}</span>` : "") +
     `</li>`;
   const items = [
-    ...(isServable(dirname(dir)) && dirname(dir) !== dir ? [link("../", "../")] : []),
+    ...(parentOf(dir) ? [link("../", "../")] : []),
     ...folders.map((n) => link(n + "/", encodeURIComponent(n) + "/")),
     ...files.map((n, i) => link(n, encodeURIComponent(n), titles[i])),
   ];
@@ -663,8 +912,102 @@ async function renderDir(dir: string) {
   return page(
     name,
     `<h1>📁 ${escapeHtml(name)}</h1>\n<ul class="listing">\n${items.join("\n")}\n</ul>`,
-    { live: LIVE_RELOAD ? dir : undefined, dir: true },
+    { live: LIVE_RELOAD ? dir : undefined, dir: true, browse: dirUrl(dir) },
   );
+}
+
+// The browse dialog asks for a folder's contents as JSON: the same files and folders as the
+// folder page.
+async function browseJson(dir: string) {
+  const { folders, files, titles } = await listDir(dir);
+  const parent = parentOf(dir);
+  return Response.json({
+    name: basename(dir) || dir,
+    path: dir,
+    dir: dirUrl(dir),
+    parent: parent && dirUrl(parent),
+    folders: folders.map((n) => ({ name: n, href: dirUrl(join(dir, n)) })),
+    files: files.map((n, i) => ({ name: n, href: urlPath(join(dir, n)), title: titles[i] })),
+  });
+}
+
+// Search looks at the text a page shows, not its Markdown source, so link addresses and
+// markup don't count as matches and the counts agree with what the page will highlight.
+// Each file's text is kept until the file changes, so searching again is quick.
+const MAX_SEARCH_FILES = 5000;
+const textCache = new Map<string, { mtime: number; text: string; title: string }>();
+
+const decodeEntities = (s: string) =>
+  s.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (m, e: string) => {
+    const lower = e.toLowerCase();
+    if (lower.startsWith("#x")) return String.fromCodePoint(parseInt(lower.slice(2), 16));
+    if (lower.startsWith("#")) return String.fromCodePoint(Number(lower.slice(1)));
+    return ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0" } as Record<string, string>)[lower] ?? m;
+  });
+
+async function plainText(path: string) {
+  const { mtimeMs } = await stat(path);
+  const hit = textCache.get(path);
+  if (hit && hit.mtime === mtimeMs) return hit;
+  const source = await Bun.file(path).text();
+  const html = renderMarkdown(source).body.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, "");
+  const entry = {
+    mtime: mtimeMs,
+    text: decodeEntities(html.replace(/<[^>]*>/g, "")),
+    title: replaceShortcodes(source.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? ""),
+  };
+  textCache.set(path, entry);
+  return entry;
+}
+
+/** Markdown files in a folder and all its subfolders: each folder's files before its subfolders. */
+async function markdownFilesUnder(dir: string, out: string[] = []): Promise<string[]> {
+  let entries;
+  try {
+    entries = (await readdir(dir, { withFileTypes: true }))
+      .filter((e) => !e.name.startsWith(".") && e.name !== "node_modules")
+      .sort((a, b) => byName(a.name, b.name));
+  } catch {
+    return out;
+  }
+  const subfolders: string[] = [];
+  for (const e of entries) {
+    if (out.length >= MAX_SEARCH_FILES) return out;
+    const full = join(dir, e.name);
+    // Symlinked folders are not followed: one pointing back up would never end.
+    if (e.isDirectory()) subfolders.push(full);
+    else if (MD_FILE.test(e.name) && (e.isFile() || (await kindOf(full)) === "file")) out.push(full);
+  }
+  for (const sub of subfolders) await markdownFilesUnder(sub, out);
+  return out;
+}
+
+/** Whitespace in the query matches any run of whitespace, so line breaks don't hide a phrase. */
+const searchPattern = (q: string) =>
+  new RegExp(
+    q.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"),
+    "gi",
+  );
+
+async function searchJson(dir: string, q: string) {
+  const files = await markdownFilesUnder(dir);
+  const re = searchPattern(q);
+  const results: { name: string; href: string; title: string; count: number }[] = [];
+  for (let i = 0; i < files.length; i += 16) {
+    const batch = await Promise.all(
+      files.slice(i, i + 16).map(async (path) => {
+        try {
+          const { text, title } = await plainText(path);
+          const count = text.match(re)?.length ?? 0;
+          return count ? { name: relative(dir, path), href: urlPath(path), title, count } : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    for (const r of batch) if (r) results.push(r);
+  }
+  return Response.json({ searched: files.length, limited: files.length >= MAX_SEARCH_FILES, results });
 }
 
 // One server shows any number of files, each in its own tab. A page's URL is the file's
@@ -684,6 +1027,9 @@ function open(path: string, kind: "file" | "dir") {
 function urlPath(file: string) {
   return file.split(sep).map(encodeURIComponent).join("/");
 }
+
+/** A folder's URL, which ends in "/". */
+const dirUrl = (dir: string) => (dir === "/" ? "/" : urlPath(dir) + "/");
 
 const isServable = (full: string) =>
   [...roots].some((root) => full === root || full.startsWith(root === "/" ? "/" : root + sep));
@@ -752,6 +1098,18 @@ const server = Bun.serve({
       return new Response("Method not allowed", { status: 405 });
     }
     if (pathname === "/" && lastOpened !== "/") return Response.redirect(lastOpened, 302);
+
+    // The browse dialog: a folder's contents, or a search of the Markdown files below it.
+    if (pathname === "/__browse" || pathname === "/__search") {
+      const dir = safePath(url.searchParams.get("dir") ?? "");
+      if (!dir || (await kindOf(dir)) !== "dir") {
+        return Response.json({ error: "Not available" }, { status: 404 });
+      }
+      const q = url.searchParams.get("q")?.trim();
+      if (pathname === "/__browse") return browseJson(dir);
+      if (!q) return Response.json({ error: "Nothing to search for" }, { status: 400 });
+      return searchJson(dir, q);
+    }
     if (LIVE_RELOAD && pathname === "/__reload") return reloadStream();
 
     // Serve files (Markdown and images etc.) from the opened folders.

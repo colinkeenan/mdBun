@@ -12,7 +12,13 @@ Following a link to a place in a page (`#id`: an index entry, a footnote, a head
 
 ### Folders
 
-`md some/folder` (or `md` with no argument, for the current folder) shows a page listing the folder's `.md` files, sorted so `chapter2.md` comes before `chapter10.md`, each with its `# title` beside the name. Subfolders that contain `.md` files are listed too, and `../` leads back up as long as it's still inside a folder opened with `md`. Opening a folder lets its files and subfolders be reached, just like opening a file in it. The listing updates by itself when files are added, removed, renamed, or retitled.
+`md some/folder` (or `md` with no argument, for the current folder) shows a page listing the folder's `.md` files, sorted so `chapter2.md` comes before `chapter10.md`, each with its `# title` beside the name. Subfolders are listed too if there is a `.md` file somewhere inside them (at any depth), and `../` leads back up as long as it's still inside a folder opened with `md`. Opening a folder lets its files and subfolders be reached, just like opening a file in it. The listing updates by itself when files are added, removed, renamed, or retitled.
+
+### Browse and search
+
+The 📂 button in the top-right corner opens a dialog listing the `.md` files in the current page's folder and its subfolders that have `.md` files somewhere inside, with `../` to go up (as far as folders opened with `md` allow). Picking a folder shows its contents in the dialog; picking a file shows it in the tab. Middle- or ctrl-clicking opens either in a new tab instead.
+
+Typing in the dialog's search field and pressing **Search** (or Enter) looks through every `.md` file in the folder shown and all the folders below it, and lists the files that match, each with its number of matches. Search ignores case, looks at the text a page shows (so link addresses and Markdown markup don't count), and finds phrases even when they break across lines. Clicking a result opens that file, scrolls to the first match, flashes its paragraph, and highlights the matched words until you click. Searching for nothing goes back to the folder listing. Hidden folders (starting with `.`) and `node_modules` are skipped, and a search stops after 5000 files.
 
 ### Light and dark
 
