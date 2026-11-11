@@ -126,6 +126,10 @@ const CSS = `
   :root[data-edit] .math[data-i]:hover { outline: 1px dashed var(--a-note); outline-offset: 2px;
                                          border-radius: 3px; }
   :root[data-edit] span.fix[data-was] { text-decoration: underline dotted var(--a-tip); }
+  :root[data-edit] details.mine, :root[data-edit] .alert { cursor: pointer; }
+  :root[data-edit] details.mine:hover, :root[data-edit] .alert:hover {
+    outline: 1px dashed var(--a-note); outline-offset: 2px; }
+  .edit-delete { color: var(--a-caution); }
   .edit-dialog { width: min(42rem, calc(100vw - 2rem)); box-sizing: border-box; padding: 1rem;
                  border: 1px solid #8885; border-radius: 8px; background: Canvas; color: CanvasText; }
   .edit-dialog::backdrop { background: #0006; }
@@ -757,7 +761,8 @@ const browseDialog = (dir: string) => `<button class="browse-toggle" type="butto
 //  - clicking an equation opens its TeX, with a preview, to correct it in the file;
 //  - "Fix text" marks the selected words as a fix: <span class="fix" data-was="…">…</span>;
 //  - "Note" and "Warning" add <details class="mine"> or > [!WARNING] after the paragraph of
-//    the selected words (or after an equation, from its dialog), with an optional ✎ marker.
+//    the selected words (or after an equation, from its dialog), with an optional ✎ marker;
+//  - clicking one of those notes, or any alert box, opens its Markdown to change or delete it.
 // These are the marks pdf2md keeps when it converts a book again. The page only says what to
 // change and where; the server (saveEdit below) finds the place in the file and writes it,
 // and live reload then shows the result.
@@ -775,7 +780,7 @@ const EDIT_HEAD = String.raw`
       const editing = () => root.hasAttribute("data-edit");
       // Text the file doesn't have as such: formulas, footnotes (moved to the end), our own controls.
       const SKIP = "script, style, dialog, button, .find-bar, .edit-bar, .math, .footnotes, .fnref, .alert-title";
-      const HINT = "Select words, or click an equation.";
+      const HINT = "Select words, or click an equation or a note.";
       const NOT_FOUND = "These words aren't in the page's text as selected. Select a few plain words.";
       const texOf = new WeakMap(); // each formula's TeX, before KaTeX replaces it
 
@@ -850,6 +855,7 @@ const EDIT_HEAD = String.raw`
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data.error || "The change couldn't be saved.");
+          return data;
         }
 
         // The dialog with these fields; save(form) gives what to send (nothing: no change)
@@ -964,6 +970,43 @@ const EDIT_HEAD = String.raw`
           form.elements.body.focus();
         }
 
+        // A note of your own or an alert box that is already in the file: change or delete it.
+        // The page only has it as HTML, so the server is asked for its Markdown first. Which
+        // one it is is told by counting, like the selected words: the nth of count.
+        async function openOld(el) {
+          const mine = el.matches("details.mine");
+          const all = [...document.querySelectorAll(mine ? "details.mine" : ".alert")];
+          const note = { kind: mine ? "mine" : "alert", i: all.indexOf(el), count: all.length };
+          let got;
+          try { got = await send({ op: "peek", where: { note } }); }
+          catch (err) { say(err.message, true); return; }
+          note.was = got.was;
+          const heading = el.querySelector(".alert-title");
+          const name = mine || !heading ? "note" : heading.textContent.trim().toLowerCase();
+          const form = ask("Change this " + name,
+            (mine ? '<label>Title<input type="text" name="title"></label>' : "") +
+            '<textarea name="body" rows="8" aria-label="Your words (Markdown, with $math$)"></textarea>',
+            '<button type="button" class="edit-delete">Delete</button>',
+            (f) => {
+              if (f.dataset.remove) return { op: "renote", where: { note }, remove: true };
+              const body = f.elements.body.value.trim();
+              if (!body) throw new Error("Write something, or use Delete.");
+              const title = mine ? f.elements.title.value.trim() : "";
+              if (body === got.body && title === got.title) return null;
+              return { op: "renote", where: { note }, body, title, sameTitle: title === got.title };
+            });
+          if (mine) form.elements.title.value = got.title;
+          form.elements.body.value = got.body;
+          form.elements.body.focus();
+          // Deleting takes a second press, since what you wrote is gone for good.
+          const del = form.querySelector(".edit-delete");
+          del.addEventListener("click", () => {
+            if (!del.dataset.sure) { del.dataset.sure = "1"; del.textContent = "Really delete this " + name + "?"; return; }
+            form.dataset.remove = "1";
+            form.requestSubmit();
+          });
+        }
+
         // Keep the selection when a button of the bar is pressed.
         bar.addEventListener("mousedown", (e) => { if (e.target.closest("button")) e.preventDefault(); });
         bar.addEventListener("click", (e) => {
@@ -976,7 +1019,8 @@ const EDIT_HEAD = String.raw`
           else openNote(button.dataset.do, where, "the selected words");
         });
 
-        // While editing, a click on an equation corrects it and one on a fix changes it.
+        // While editing, a click on an equation corrects it, and one on a fix, a note of your
+        // own or an alert box changes it.
         document.addEventListener("click", (e) => {
           if (!editing() || e.button || !e.target.closest) return;
           const sel = getSelection();
@@ -985,7 +1029,12 @@ const EDIT_HEAD = String.raw`
           const math = e.target.closest(".math[data-i]");
           if (math) { e.preventDefault(); openMath(math); return; }
           const fix = e.target.closest("span.fix[data-was]");
-          if (!fix) return;
+          if (!fix) {
+            // Links in a note still work, and its title still opens and closes it.
+            const note = e.target.closest("details.mine, .alert");
+            if (note && !e.target.closest("a, summary")) { e.preventDefault(); openOld(note); }
+            return;
+          }
           const range = document.createRange();
           range.selectNodeContents(fix);
           try { const where = place(range); openFix(where, where.text, fix.dataset.was); }
@@ -1730,6 +1779,124 @@ async function editNote(src: string, edit: any, file: string): Promise<string> {
   return src.slice(0, end) + mark + src.slice(end, at) + "\n\n" + note + (rest.trim() ? rest : "\n");
 }
 
+// Changing or deleting a note that is already in the file: one of your own
+// (<details class="mine">) or an alert box (> [!WARNING] etc.; in a book converted by pdf2md
+// those are all yours too, since pdf2md never writes one). The page says which it means by
+// counting, the nth of count on the page, and the server only goes ahead if it finds as many
+// in the file. Alerts in footnotes, lists or other quotes are on the page but not counted
+// here, so a file with any of those has its alerts changed in the file itself.
+const ONLY_IN_FILE = "This one can't be found for sure in the file. Change it in the file itself.";
+const ALERT_LINE = /^( {0,3})> ?\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*$/i;
+const QUOTE_LINE = /^ {0,3}>/;
+
+function noteSpans(src: string, kind: unknown): Span[] {
+  const code = codeSpans(src);
+  const spans: Span[] = [];
+  if (kind === "mine") {
+    const inCode = (at: number) => code.some((c) => c.start <= at && at < c.end);
+    // A note inside another is on the page too, so the search goes on inside each one.
+    for (const m of src.matchAll(/<details class="mine"[^>]*>/g)) {
+      if (inCode(m.index)) continue;
+      const tag = /<(\/?)details\b[^>]*>/g;
+      tag.lastIndex = m.index + m[0].length;
+      let depth = 1;
+      for (let t; (t = tag.exec(src)); ) {
+        depth += t[1] ? -1 : 1;
+        if (depth === 0) {
+          spans.push({ start: m.index, end: t.index + t[0].length });
+          break;
+        }
+      }
+    }
+  } else if (kind === "alert") {
+    const inFence = (at: number) => code.some((c) => c.fenced && c.start <= at && at < c.end);
+    const lines = src.split("\n");
+    const starts: number[] = [];
+    let at = 0;
+    for (const line of lines) {
+      starts.push(at);
+      at += line.length + 1;
+    }
+    const text = (i: number) => lines[i].replace(/\r$/, "");
+    for (let i = 0; i < lines.length; i++) {
+      // the marker has to be the first line of its quote
+      if (!ALERT_LINE.test(text(i)) || (i > 0 && QUOTE_LINE.test(lines[i - 1])) || inFence(starts[i])) continue;
+      let j = i;
+      while (j + 1 < lines.length && QUOTE_LINE.test(lines[j + 1])) j++;
+      spans.push({ start: starts[i], end: starts[j] + text(j).length });
+      i = j;
+    }
+  }
+  return spans;
+}
+
+/** The note the page means, taken apart: head (kept as it is), title (notes only) and body. */
+function findNote(src: string, where: any) {
+  const n = where?.note ?? {};
+  const spans = noteSpans(src, n.kind);
+  const span = spans.length === n.count ? spans[n.i] : undefined;
+  if (!span) throw new EditError(ONLY_IN_FILE);
+  const was = src.slice(span.start, span.end).replace(/\r\n/g, "\n");
+  if (n.kind === "mine") {
+    const m = was.match(/^(<details[^>]*>)\s*<summary>([\s\S]*?)<\/summary>([\s\S]*)<\/details>$/);
+    if (!m) throw new EditError(ONLY_IN_FILE);
+    const title = m[2].trim().replace(/^✎\s*/, "");
+    return { kind: "mine", spans, span, was, head: m[1], summary: m[2], title, body: m[3].trim(), indent: "" };
+  }
+  const lines = was.split("\n");
+  // A line of the quote written without its ">" would be left behind.
+  const next = src.slice(span.end).match(/^\r?\n([^\n]*)/)?.[1] ?? "";
+  if (next.trim()) throw new EditError(ONLY_IN_FILE);
+  const indent = lines[0].match(ALERT_LINE)![1];
+  const body = lines.slice(1).map((l) => l.replace(/^ {0,3}> ?/, "")).join("\n").trim();
+  return { kind: "alert", spans, span, was, head: lines[0], summary: "", title: "", body, indent };
+}
+
+/** What the page shows in its dialog; "was" comes back with the change, to check nothing moved. */
+function peekNote(src: string, edit: any) {
+  const { was, title, body } = findNote(src, edit.where);
+  return { was, title, body };
+}
+
+function editOldNote(src: string, edit: any): string {
+  const note = findNote(src, edit.where);
+  const { span, spans } = note;
+  if (note.was !== edit.where.note.was) {
+    throw new EditError("The file has changed since this page was shown. Reload the page and try again.");
+  }
+  if (edit.remove) {
+    // Its empty lines go with it, and so does the ✎ marker that led to it.
+    const before = src.slice(0, span.start).replace(/(\r?\n[ \t]*)+$/, "");
+    const after = src.slice(span.end).replace(/^([ \t]*\r?\n)+/, "");
+    const out = before && after ? before + "\n\n" + after : before ? before + "\n" : after;
+    const id = note.head.match(/\bid="(mine-\d+)"/)?.[1];
+    return id ? out.replaceAll(`<sup>[✎](#${id})</sup>`, "") : out;
+  }
+  const body = String(edit.body ?? "").trim();
+  if (!body) throw new EditError("Write something, or use Delete.");
+  let next: string;
+  if (note.kind === "mine") {
+    // An unchanged title stays as written in the file, whatever HTML it has.
+    let summary = note.summary;
+    if (!edit.sameTitle) {
+      const title = (String(edit.title ?? "").trim() || "My note").replace(/\s+/g, " ").replace(/</g, "&lt;");
+      summary = title.startsWith("✎") ? title : "✎ " + title;
+    }
+    next = `${note.head}\n<summary>${summary}</summary>\n\n${body}\n\n</details>`;
+  } else {
+    const quote = note.indent + ">";
+    next = note.head + "\n" + body.split(/\r?\n/).map((l) => (l.trim() ? `${quote} ${l}` : quote)).join("\n");
+  }
+  const out = src.slice(0, span.start) + next + src.slice(span.end);
+  // It must still be one note, the same one of the file.
+  const after = noteSpans(out, note.kind);
+  const same = after[edit.where.note.i];
+  if (after.length !== spans.length || !same || out.slice(same.start, same.end) !== next) {
+    throw new EditError("This can't be saved as one note: it must not contain </details> or a note of its own.");
+  }
+  return out;
+}
+
 // One change at a time, so two can't read the same file and overwrite each other.
 let editQueue: Promise<unknown> = Promise.resolve();
 
@@ -1740,6 +1907,7 @@ function saveEdit(file: string, edit: any): Promise<void> {
       edit.op === "math" ? editMath(src, edit)
       : edit.op === "fix" ? editFix(src, edit)
       : edit.op === "note" ? await editNote(src, edit, file)
+      : edit.op === "renote" ? editOldNote(src, edit)
       : null;
     if (out === null) throw new EditError("Unknown change.");
     if (out === src) return;
@@ -1818,6 +1986,8 @@ const server = Bun.serve({
         return Response.json({ error: "This file can't be edited." }, { status: 404 });
       }
       try {
+        // Not a change: the Markdown of a note, for the page to show in its dialog.
+        if (edit.op === "peek") return Response.json(peekNote(await Bun.file(file).text(), edit));
         await saveEdit(file, edit);
         return Response.json({ ok: true });
       } catch (err) {
