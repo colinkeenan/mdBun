@@ -4,6 +4,8 @@ Serve `.md` files to `html` on `localhost:3000`on Linux or Termux on Android
 
 Both `server.ts` and `package.json` were written by Claude free. I asked it to make a markdown to html server that would run using bun in a terminal by using bun's built-in markdown capability. I also asked it to render math and html for expandable content, and to simply open the .md file provided on the command line. What it came up with works perfectly without any dependencies but requires internet access in order to access highlight.js CDN and KaTeX. It offered to bundle KaTex and highlight.js locally to make it work offline, but I'd rather keep it working without dependencies. I wrote the desktop file and bash script with a little help from Copilot on the web.
 
+Since November 2026 the rest has been written by Claude in [Claude Code](https://claude.com/claude-code) (Opus 5.5, then Fable 5.2), working from my requests: linked files, a tab per file, folder listings, browse and search, the light/dark toggle, editing, and remembering your place, along with the changes to `md` and this README that go with them. Each commit says which model wrote it.
+
 ### Linked Markdown files
 
 Links to other `.md` files are rendered as HTML too, so a table of contents that links to one file per chapter works like a small website. Links into subfolders (`chapters/ch1.md`), back up (`../toc.md`), and to headings (`ch1.md#section-a`) all work. Only files inside the folder of a `.md` file you opened with `md` (and its subfolders) can be reached, so open the top-level file (e.g. the table of contents) rather than a chapter in a subfolder.
