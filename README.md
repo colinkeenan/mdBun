@@ -82,3 +82,9 @@ Run in GUI by clicking the `.md` file from the file browser, or right-click a fo
    ln -s /data/data/com.termux/files/usr/bin/md ~/bin/termux-file-editor
    ```
 1. The Fluffy file browser works well with this. Press a .md file in Fluffy (don't bother to checkmark), choose to open with "Termux" and choose "Edit". It will run `~/bin/termux-file-editor` in Termux which is the `md` command and the chosen `.md` file will be displayed in your default browser.
+
+## Licence
+
+Copyright (C) 2026 Colin Keenan
+
+mdBun is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It comes with no warranty. See [LICENSE](LICENSE) for the full text.
