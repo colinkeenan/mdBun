@@ -24,6 +24,20 @@ Typing in the dialog's search field and pressing **Search** (or Enter) looks thr
 
 Pages follow the system's light or dark setting. The ☀️/🌙 button in the top-right corner switches between them; the choice applies to every tab and is remembered. Switching back to match the system forgets the choice, so pages follow the system again.
 
+### Editing
+
+The ✏️ button in the top-right corner turns editing on for the tab (it stays on when you follow links, until you press it again) and shows a bar of buttons. Every change is written to the `.md` file itself, and the page then reloads and flashes what changed. The buttons write the marks that [pdf2md](https://github.com/colinkeenan/pdf2md) keeps when it converts a book again, but they work in any Markdown file:
+
+* **Click an equation** to correct it: its TeX opens with a preview that follows your typing, and KaTeX's complaint if it can't be typeset. **Save** (or Ctrl+Enter) writes it where it stands in the file. **Note after it…** and **Warning after it…** add one of your own under the equation instead.
+* **Fix text**: select words the conversion got wrong, press the button, and type them as the book has them. They are written as `<span class="fix" data-was="as converted">as in the book</span>`, which reads as normal text. While editing, fixes are underlined with dots; click one to change it or to undo it.
+* **Note**: select words and press the button to add a collapsible note of your own (`<details class="mine">`) after their paragraph. Tick the box to also put a ✎ marker right after the selected words (`<sup>[✎](#mine-N)</sup>`); clicking the marker opens the note.
+* **Warning**: the same, for a box that is always visible (`> [!WARNING]`), e.g. where you think the book is wrong.
+* **Equations to check** appears when the folder has a `check-equations.md` (pdf2md's list of the equations most worth comparing with the book) and opens it. Start with its "Big differences" section: each entry leads to its equation, which you then click to correct.
+
+Notes and warnings are Markdown and can have `$math$` in them. To change or remove one later, edit the file.
+
+To find selected words in the file, the page says which occurrence of them it is (the 3rd of 7, say) and the server counts the same words in the file. If the counts differ, because the selection has a formula, a link or *emphasis* in it, or is in a footnote, nothing is changed and you are asked to select a few plain words instead. Only pages served by mdBun can ask for changes, and only to `.md` files in folders opened with `md`.
+
 ### Multiple tabs
 
 Each file gets its own address based on its full path, like `http://localhost:3000/home/me/book/toc.md`, so every tab can show a different file, from the same folder or different ones. Running `md` while the server is already running adds the file to it and opens a new tab, instead of restarting the server, so tabs that are already open keep working. The server keeps running until you stop it (e.g. `fuser -k 3000/tcp`). Restarting it means files in folders other than the one you start it with show "Not available" until you run `md` on them again.

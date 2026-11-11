@@ -87,20 +87,58 @@ const CSS = `
 
   /* Light/dark toggle. Its icon comes from CSS so the button's HTML never changes, which
      keeps live reload's comparison of old and new pages from seeing a difference in it. */
-  .theme-toggle, .browse-toggle {
+  .theme-toggle, .browse-toggle, .edit-toggle {
                   position: fixed; top: 0.6rem; right: 0.6rem; width: 2.2rem; height: 2.2rem;
                   border: 1px solid #8885; border-radius: 50%; background: Canvas; cursor: pointer;
                   font-size: 1.1rem; line-height: 1; padding: 0; opacity: 0.6; }
   .theme-toggle:hover, .theme-toggle:focus-visible,
-  .browse-toggle:hover, .browse-toggle:focus-visible { opacity: 1; }
+  .browse-toggle:hover, .browse-toggle:focus-visible,
+  .edit-toggle:hover, .edit-toggle:focus-visible { opacity: 1; }
   .browse-toggle { right: 3.2rem; }
+  .edit-toggle { right: 5.8rem; }
+  .edit-toggle::before { content: "✏️"; }
+  :root[data-edit] .edit-toggle { opacity: 1; border-color: var(--a-note); box-shadow: 0 0 0 2px var(--a-note); }
   .browse-toggle::before { content: "📂"; }
   .theme-toggle::before { content: "🌙"; }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .theme-toggle::before { content: "☀️"; }
   }
   :root[data-theme="dark"] .theme-toggle::before { content: "☀️"; }
-  @media print { .theme-toggle, .browse-toggle { display: none; } }
+  @media print { .theme-toggle, .browse-toggle, .edit-toggle, .edit-bar { display: none !important; } }
+
+  /* Editing (the ✏️ button): a bar of buttons, and a dialog for each kind of change. */
+  .edit-bar { display: none; position: fixed; top: 0.6rem; left: 0.6rem; z-index: 1;
+              max-width: calc(100vw - 9.8rem); box-sizing: border-box; flex-wrap: wrap;
+              align-items: center; gap: 0.3rem 0.4rem; padding: 0.3rem 0.5rem; font-size: 0.9rem;
+              background: Canvas; border: 1px solid #8885; border-radius: 8px;
+              box-shadow: 0 2px 10px #0003; }
+  :root[data-edit] .edit-bar { display: flex; }
+  .edit-bar button, .edit-dialog button { font: inherit; padding: 0.15rem 0.6rem; cursor: pointer; }
+  .edit-msg { color: #888; }
+  .edit-msg.bad, .edit-error { color: var(--a-caution); }
+  :root[data-edit] .math[data-i], :root[data-edit] span.fix[data-was] { cursor: pointer; }
+  :root[data-edit] .math[data-i]:hover { outline: 1px dashed var(--a-note); outline-offset: 2px;
+                                         border-radius: 3px; }
+  :root[data-edit] span.fix[data-was] { text-decoration: underline dotted var(--a-tip); }
+  .edit-dialog { width: min(42rem, calc(100vw - 2rem)); box-sizing: border-box; padding: 1rem;
+                 border: 1px solid #8885; border-radius: 8px; background: Canvas; color: CanvasText; }
+  .edit-dialog::backdrop { background: #0006; }
+  .edit-dialog h2 { margin: 0 0 0.6rem; font-size: 1.1rem; }
+  .edit-dialog textarea, .edit-dialog input[type="text"] {
+                 display: block; width: 100%; box-sizing: border-box; font: inherit;
+                 padding: 0.3rem 0.5rem; margin: 0.3rem 0 0.6rem; }
+  .edit-dialog textarea[name="tex"] { font-family: ui-monospace, monospace; font-size: 0.9rem; }
+  .edit-dialog label { display: block; }
+  .edit-dialog input[type="checkbox"] { margin-right: 0.4rem; }
+  .edit-was { margin: 0 0 0.4rem; color: #888; overflow-wrap: anywhere; }
+  .edit-preview { overflow-x: auto; min-height: 2rem; padding: 0.3rem 0; }
+  .edit-error { margin: 0.4rem 0; overflow-wrap: anywhere; }
+  .edit-error:empty { display: none; }
+  .edit-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.8rem; }
+  .edit-gap { flex: 1; }
+  /* Your own notes (<details class="mine">) stand out from the book's text. */
+  details.mine { border-color: var(--a-note); }
+  details.mine > summary { color: var(--a-note); }
 
   /* Browse and search dialog */
   .browse { width: min(40rem, calc(100vw - 2rem)); max-height: min(40rem, calc(100vh - 2rem));
@@ -259,6 +297,7 @@ const liveHead = (self: string, isDir = false) => `
         let el = id && document.getElementById(id);
         if (!el) return;
         if (!el.textContent.trim() && el.parentElement) el = el.parentElement;
+        if (el.tagName === "DETAILS") el.open = true; // a ✎ marker leads to a note: show it
         el.scrollIntoView({ block: "center" });
         el.classList.remove("md-flash");
         void el.offsetWidth; // restart the animation when the same target is flashed again
@@ -406,7 +445,7 @@ const BROWSE_HEAD = String.raw`
         let text = "";
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
           acceptNode: (n) => n.parentElement && !n.parentElement.closest(
-            "script, style, dialog, button, .find-bar, .katex-mathml") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+            "script, style, dialog, button, .find-bar, .edit-bar, .katex-mathml") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
         });
         for (let n; (n = walker.nextNode()); ) { nodes.push([n, text.length]); text += n.data; }
         const locate = (pos, isEnd) => {
@@ -599,6 +638,260 @@ const browseDialog = (dir: string) => `<button class="browse-toggle" type="butto
 </dialog>
 `;
 
+// Editing. The ✏️ button turns it on for the tab (kept across reloads and links). Then:
+//  - clicking an equation opens its TeX, with a preview, to correct it in the file;
+//  - "Fix text" marks the selected words as a fix: <span class="fix" data-was="…">…</span>;
+//  - "Note" and "Warning" add <details class="mine"> or > [!WARNING] after the paragraph of
+//    the selected words (or after an equation, from its dialog), with an optional ✎ marker.
+// These are the marks pdf2md keeps when it converts a book again. The page only says what to
+// change and where; the server (saveEdit below) finds the place in the file and writes it,
+// and live reload then shows the result.
+//
+// Where the selected words are is told by counting: they are the nth of count places those
+// words appear in the page's text. The server counts the same words in the file and only
+// goes ahead if it finds as many, so a place it can't be sure of is refused, never guessed.
+//
+// As in BROWSE_HEAD, the script must not use "$" followed by "{", or backticks.
+const EDIT_HEAD = String.raw`
+  <script>
+    (() => {
+      const KEY = "md-edit", MARK = "md-edit-marker", root = document.documentElement;
+      try { if (sessionStorage.getItem(KEY)) root.setAttribute("data-edit", ""); } catch {}
+      const editing = () => root.hasAttribute("data-edit");
+      // Text the file doesn't have as such: formulas, footnotes (moved to the end), our own controls.
+      const SKIP = "script, style, dialog, button, .find-bar, .edit-bar, .math, .footnotes, .fnref, .alert-title";
+      const HINT = "Select words, or click an equation.";
+      const NOT_FOUND = "These words aren't in the page's text as selected. Select a few plain words.";
+      const texOf = new WeakMap(); // each formula's TeX, before KaTeX replaces it
+
+      // The selection: { text, nth, count }, see above.
+      function place(range) {
+        if (!range) throw new Error("Select some words first.");
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+          acceptNode: (n) => n.parentElement && !n.parentElement.closest(SKIP) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+        });
+        let text = "", start = -1, end = -1;
+        for (let n; (n = walker.nextNode()); ) {
+          if (start < 0) {
+            if (n === range.startContainer) start = text.length + range.startOffset;
+            else if (range.comparePoint(n, 0) >= 0) start = text.length;
+          }
+          if (n === range.endContainer) end = text.length + range.endOffset;
+          else if (range.comparePoint(n, n.data.length) <= 0) end = text.length + n.data.length;
+          text += n.data;
+        }
+        const raw = start < 0 || end <= start ? "" : text.slice(start, end);
+        const words = raw.trim();
+        if (!words) throw new Error("Select some words first (not only a formula).");
+        const at = start + raw.length - raw.trimStart().length;
+        const re = new RegExp(words.split(/\s+/).map((w) => w.replace(/[.*+?^$\{}()|[\]\\]/g, "\\$&")).join("\\s+"), "g");
+        let nth = -1, count = 0;
+        for (const m of text.matchAll(re)) { if (m.index === at) nth = count; count++; }
+        if (nth < 0) throw new Error(NOT_FOUND);
+        return { text: words, nth, count };
+      }
+
+      document.addEventListener("DOMContentLoaded", () => {
+        for (const el of document.querySelectorAll(".math[data-i]")) texOf.set(el, el.textContent);
+        const toggle = document.querySelector(".edit-toggle");
+        const bar = document.querySelector(".edit-bar");
+        const dialog = document.querySelector("dialog.edit-dialog");
+        if (!toggle || !bar || !dialog) return;
+        const msg = bar.querySelector(".edit-msg");
+        let msgTimer;
+        function say(text, bad) {
+          clearTimeout(msgTimer);
+          msg.textContent = text;
+          msg.classList.toggle("bad", !!bad);
+          if (text !== HINT) msgTimer = setTimeout(() => say(HINT), 8000);
+        }
+        say(HINT);
+
+        toggle.addEventListener("click", () => {
+          const on = root.toggleAttribute("data-edit");
+          try { on ? sessionStorage.setItem(KEY, "1") : sessionStorage.removeItem(KEY); } catch {}
+          say(HINT);
+        });
+
+        // Tapping a button on a phone drops the selection first, so the last one is kept
+        // for a moment after it goes.
+        let kept = null, lostAt = 0;
+        document.addEventListener("selectionchange", () => {
+          const sel = getSelection();
+          if (sel && sel.rangeCount && !sel.isCollapsed) { kept = sel.getRangeAt(0).cloneRange(); lostAt = 0; }
+          else if (kept && !lostAt) lostAt = Date.now();
+        });
+        function picked() {
+          const sel = getSelection();
+          if (sel && sel.rangeCount && !sel.isCollapsed) return sel.getRangeAt(0);
+          return kept && lostAt && Date.now() - lostAt < 1500 ? kept : null;
+        }
+
+        async function send(payload) {
+          const res = await fetch("/__edit", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(Object.assign({ path: location.pathname }, payload)),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || "The change couldn't be saved.");
+        }
+
+        // The dialog with these fields; save(form) gives what to send (nothing: no change)
+        // or throws what is wrong. Ctrl+Enter saves, Esc cancels.
+        function ask(title, fields, extra, save) {
+          dialog.innerHTML =
+            '<form><h2>' + title + '</h2>' + fields + '<p class="edit-error" role="alert"></p>' +
+            '<div class="edit-actions">' + extra + '<span class="edit-gap"></span>' +
+            '<button type="button" class="edit-cancel">Cancel</button>' +
+            '<button type="submit" class="edit-save">Save</button></div></form>';
+          const form = dialog.querySelector("form");
+          const error = form.querySelector(".edit-error");
+          const button = form.querySelector(".edit-save");
+          form.querySelector(".edit-cancel").addEventListener("click", () => dialog.close());
+          form.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); form.requestSubmit(); }
+          });
+          form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            if (button.disabled) return;
+            let payload;
+            try { payload = save(form); } catch (err) { error.textContent = err.message; return; }
+            if (!payload) { dialog.close(); return; }
+            button.disabled = true;
+            try {
+              await send(payload);
+              dialog.close();
+              say("Saved.");
+              if (toggle.dataset.live !== "1") location.reload(); // live reload does it otherwise
+            } catch (err) {
+              error.textContent = err.message;
+              button.disabled = false;
+            }
+          });
+          dialog.showModal();
+          return form;
+        }
+
+        function openMath(el) {
+          const src = texOf.get(el);
+          if (src == null) return;
+          const display = el.classList.contains("display");
+          const d = display ? 2 : 1;
+          const tex = src.slice(d, -d).trim();
+          const where = { math: { i: Number(el.dataset.i), was: src } };
+          const form = ask("Correct this equation",
+            '<textarea name="tex" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="The equation in TeX"></textarea>' +
+            '<div class="edit-preview"></div>',
+            '<button type="button" data-then="note">Note after it…</button>' +
+            '<button type="button" data-then="warning">Warning after it…</button>',
+            (f) => {
+              const now = f.elements.tex.value.trim();
+              if (!now) throw new Error("The equation can't be empty.");
+              return now === tex ? null : { op: "math", where, now };
+            });
+          const area = form.elements.tex;
+          const preview = form.querySelector(".edit-preview");
+          const error = form.querySelector(".edit-error");
+          area.value = tex;
+          area.rows = Math.min(16, Math.max(3, tex.split("\n").length + 1));
+          function show() {
+            if (!window.katex) return;
+            error.textContent = "";
+            try {
+              katex.render(area.value, preview, { displayMode: display, throwOnError: true });
+            } catch (err) {
+              error.textContent = err.message;
+              try { katex.render(area.value, preview, { displayMode: display, throwOnError: false }); } catch {}
+            }
+          }
+          area.addEventListener("input", show);
+          show();
+          for (const b of form.querySelectorAll("[data-then]")) {
+            b.addEventListener("click", () => { dialog.close(); openNote(b.dataset.then, where, display ? "" : "the formula"); });
+          }
+        }
+
+        // was: what an earlier fix replaced, when that fix is being changed.
+        function openFix(where, text, was) {
+          const form = ask("Fix the converted text",
+            '<p class="edit-was"></p>' +
+            '<textarea name="now" rows="3" aria-label="The words as in the book"></textarea>',
+            was == null ? "" : '<button type="button" class="edit-undo">Undo this fix</button>',
+            (f) => {
+              const now = f.elements.now.value.trim();
+              return now === text ? null : { op: "fix", where, now };
+            });
+          form.querySelector(".edit-was").textContent = "As converted: " + (was == null ? text : was);
+          form.elements.now.value = text;
+          form.elements.now.select();
+          const undo = form.querySelector(".edit-undo");
+          if (undo) undo.addEventListener("click", () => { form.elements.now.value = was; form.requestSubmit(); });
+        }
+
+        // kind: "note" (collapsible) or "warning" (a box). markAfter: what a ✎ marker would
+        // follow ("" if there can't be one).
+        function openNote(kind, where, markAfter) {
+          const note = kind === "note";
+          const form = ask(note ? "Add a note" : "Add a warning",
+            (note ? '<label>Title<input type="text" name="title" value="My note"></label>' : "") +
+            '<textarea name="body" rows="6" aria-label="Your words (Markdown, with $math$)" placeholder="Your words (Markdown, with $math$)"></textarea>' +
+            (note && markAfter ? '<label><input type="checkbox" name="marker">Put a ✎ marker after ' + markAfter + ', linked to the note</label>' : ""),
+            "",
+            (f) => {
+              const body = f.elements.body.value.trim();
+              if (!body) throw new Error("Write something first.");
+              const marker = !!(f.elements.marker && f.elements.marker.checked);
+              if (f.elements.marker) { try { localStorage.setItem(MARK, marker ? "1" : ""); } catch {} }
+              return { op: "note", where, kind, body, marker, title: note ? f.elements.title.value.trim() : "" };
+            });
+          if (form.elements.marker) { try { form.elements.marker.checked = !!localStorage.getItem(MARK); } catch {} }
+          form.elements.body.focus();
+        }
+
+        // Keep the selection when a button of the bar is pressed.
+        bar.addEventListener("mousedown", (e) => { if (e.target.closest("button")) e.preventDefault(); });
+        bar.addEventListener("click", (e) => {
+          const button = e.target.closest("button[data-do]");
+          if (!button) return;
+          let where;
+          try { where = place(picked()); } catch (err) { say(err.message, true); return; }
+          say(HINT);
+          if (button.dataset.do === "fix") openFix(where, where.text, null);
+          else openNote(button.dataset.do, where, "the selected words");
+        });
+
+        // While editing, a click on an equation corrects it and one on a fix changes it.
+        document.addEventListener("click", (e) => {
+          if (!editing() || e.button || !e.target.closest) return;
+          const sel = getSelection();
+          if (sel && !sel.isCollapsed) return; // the end of selecting, not a click
+          if (e.target.closest("dialog, .edit-bar")) return;
+          const math = e.target.closest(".math[data-i]");
+          if (math) { e.preventDefault(); openMath(math); return; }
+          const fix = e.target.closest("span.fix[data-was]");
+          if (!fix) return;
+          const range = document.createRange();
+          range.selectNodeContents(fix);
+          try { const where = place(range); openFix(where, where.text, fix.dataset.was); }
+          catch (err) { say("This fix can only be changed in the file.", true); }
+        });
+      });
+    })();
+  </script>`;
+
+/** The edit button, the bar it shows, and the dialog; checklist: link to check-equations.md. */
+const editTools = (checklist: boolean) => `<button class="edit-toggle" type="button" data-live="${LIVE_RELOAD ? 1 : 0}" aria-label="Edit: correct equations and text, add notes" title="Edit: correct equations and text, add notes"></button>
+<div class="edit-bar" role="toolbar" aria-label="Editing">
+  <button type="button" data-do="fix" title="Correct the selected words where the conversion got them wrong">Fix text</button>
+  <button type="button" data-do="note" title="Add a collapsible note of your own after the paragraph of the selected words">Note</button>
+  <button type="button" data-do="warning" title="Add a warning box after the paragraph of the selected words">Warning</button>
+  ${checklist ? '<a href="check-equations.md" title="The equations most worth comparing with the book">Equations to check</a>' : ""}
+  <span class="edit-msg" aria-live="polite"></span>
+</div>
+<dialog class="edit-dialog" aria-label="Edit"></dialog>
+`;
+
 const clients = new Set<ReadableStreamDefaultController<Uint8Array>>();
 const encoder = new TextEncoder();
 
@@ -659,6 +952,8 @@ function page(
     dir?: boolean;
     /** Show the browse button, starting in this folder (a URL ending in "/"). */
     browse?: string;
+    /** Show the edit button; checklist: the folder has a check-equations.md to link to. */
+    edit?: { checklist: boolean };
   } = {},
 ) {
   const html = `<!doctype html>
@@ -667,11 +962,11 @@ function page(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
-  <style>${CSS}</style>${THEME_HEAD}${opts.live ? liveHead(opts.live, opts.dir) : ""}${opts.browse ? BROWSE_HEAD : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
+  <style>${CSS}</style>${THEME_HEAD}${opts.live ? liveHead(opts.live, opts.dir) : ""}${opts.browse ? BROWSE_HEAD : ""}${opts.edit ? EDIT_HEAD : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
 </head>
 <body>
 ${body}
-${opts.browse ? browseDialog(opts.browse) : ""}<button class="theme-toggle" type="button" aria-label="Switch between light and dark" title="Switch between light and dark"></button>
+${opts.browse ? browseDialog(opts.browse) : ""}${opts.edit ? editTools(opts.edit.checklist) : ""}<button class="theme-toggle" type="button" aria-label="Switch between light and dark" title="Switch between light and dark"></button>
 </body>
 </html>`;
   return new Response(html, {
@@ -711,7 +1006,8 @@ function restoreMath(html: string, stash: string[]) {
   return html.replace(/ZZMATH(\d+)ZZ/g, (_, i) => {
     const math = stash[Number(i)];
     const cls = math.startsWith("$$") ? "math display" : "math inline";
-    return `<span class="${cls}">${escapeHtml(math)}</span>`;
+    // data-i: which formula of the file it is, so the page can ask to correct it
+    return `<span class="${cls}" data-i="${i}">${escapeHtml(math)}</span>`;
   });
 }
 
@@ -724,6 +1020,9 @@ function restoreMath(html: string, stash: string[]) {
 const CODE_SPAN =
   /^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$|(`+)(?:(?!\2)[\s\S])+?\2/gm;
 
+const FOOTNOTE_DEF =
+  /^\[\^([^\]\s]+)\]:[ \t]*([^\n]*(?:\n(?:[ \t]+\S[^\n]*|[ \t]*(?=\n[ \t]+\S)))*)/gm;
+
 function extractFootnotes(src: string): { text: string; section: string } {
   const code: string[] = [];
   const unstash = (s: string) => s.replace(/ZZCODE(\d+)ZZ/g, (_, i) => code[Number(i)]);
@@ -732,7 +1031,7 @@ function extractFootnotes(src: string): { text: string; section: string } {
   // Definitions: "[^label]: first line" plus any indented continuation lines.
   const defs = new Map<string, string>();
   text = text.replace(
-    /^\[\^([^\]\s]+)\]:[ \t]*([^\n]*(?:\n(?:[ \t]+\S[^\n]*|[ \t]*(?=\n[ \t]+\S)))*)/gm,
+    FOOTNOTE_DEF,
     (_, label: string, body: string) => {
       if (!defs.has(label)) defs.set(label, body.replace(/\n {1,4}|\n\t/g, "\n").trim());
       return "";
@@ -874,6 +1173,9 @@ function renderMarkdown(source: string) {
   };
 }
 
+// pdf2md lists there the equations of a book most worth comparing with the book.
+const CHECKLIST = "check-equations.md";
+
 // Re-read the file on every request so edits show up on refresh.
 async function renderFile(path: string) {
   const source = await Bun.file(path).text();
@@ -881,11 +1183,14 @@ async function renderFile(path: string) {
     source.match(/^#\s+(.+)$/m)?.[1] ?? basename(path, extname(path)),
   );
   const { body, math, code } = renderMarkdown(source);
+  const checklist =
+    basename(path) !== CHECKLIST && (await Bun.file(join(dirname(path), CHECKLIST)).exists());
   return page(title, body, {
     math,
     code,
     live: LIVE_RELOAD ? path : undefined,
     browse: dirUrl(dirname(path)),
+    edit: { checklist },
   });
 }
 
@@ -1119,6 +1424,213 @@ function safePath(pathname: string): string | null {
   return isServable(full) ? full : null;
 }
 
+// Editing: the changes the page's ✏️ tools ask for (see EDIT_HEAD), made in the Markdown
+// file. What is written is what pdf2md keeps when it converts a book again:
+//   an equation corrected where it stands;
+//   <span class="fix" data-was="as converted">as in the book</span>;
+//   <details class="mine"> … </details> or > [!WARNING] after a block, between empty lines;
+//   <sup>[✎](#mine-N)</sup> in a sentence, with id="mine-N" on its note.
+// A change whose place in the file isn't certain is refused with a message for the reader.
+class EditError extends Error {}
+
+const NOT_IN_FILE =
+  "These words can't be found for sure in the file (formatting or a formula may be in the " +
+  "way, or the same words read differently elsewhere). Select a few plain words, or more of them.";
+
+type Span = { start: number; end: number };
+
+/** Where each formula is in the source; the nth is the page's data-i="n". */
+function mathSpans(src: string): Span[] {
+  const spans: Span[] = [];
+  for (const m of src.matchAll(PROTECT)) {
+    if (m[3] ?? m[4]) spans.push({ start: m.index, end: m.index + m[0].length });
+  }
+  return spans;
+}
+
+const codeSpans = (src: string) =>
+  [...src.matchAll(CODE_SPAN)].map((m) => ({
+    start: m.index,
+    end: m.index + m[0].length,
+    fenced: m[1] !== undefined,
+  }));
+
+/**
+ * The source with everything the page doesn't show as text blanked out (formulas, tags,
+ * comments, link addresses, footnote definitions), each character replaced so that positions
+ * stay the same. The page leaves the same things out when it counts.
+ */
+function shownText(src: string): string {
+  const blank = (m: string) => "\0".repeat(m.length);
+  return src
+    .replace(PROTECT, (m, _fence, _tick, display, inline) => ((display ?? inline) ? blank(m) : m))
+    .replace(FOOTNOTE_DEF, blank)
+    .replace(/<!--[\s\S]*?-->|<\/?[a-zA-Z][^<>]*>|!\[[^\]\n]*\]\([^)\n]*\)|\]\([^)\n]*\)/g, blank);
+}
+
+/** The place in the source the page means: a formula, or the selected words. */
+function locate(src: string, where: any): Span {
+  if (where?.math) {
+    const span = mathSpans(src)[where.math.i];
+    if (!span || src.slice(span.start, span.end).replace(/\r\n/g, "\n") !== where.math.was) {
+      throw new EditError("The file has changed since this page was shown. Reload the page and try again.");
+    }
+    return span;
+  }
+  const words = typeof where?.text === "string" ? where.text.trim().split(/\s+/).filter(Boolean) : [];
+  if (!words.length) throw new EditError("Select some words first.");
+  const re = new RegExp(words.map((w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "g");
+  const found = [...shownText(src).matchAll(re)];
+  const m = found.length === where.count ? found[where.nth] : undefined;
+  if (!m) throw new EditError(NOT_IN_FILE);
+  return { start: m.index, end: m.index + m[0].length };
+}
+
+const FIX_SPAN = /<span class="fix" data-was="([^"]*)">([\s\S]*?)<\/span>/g;
+const toAttr = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const fromAttr = (s: string) =>
+  s.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+
+function editMath(src: string, edit: any): string {
+  const { start, end } = locate(src, { math: edit.where?.math ?? {} });
+  const old = src.slice(start, end);
+  const d = old.startsWith("$$") ? 2 : 1;
+  const inner = old.slice(d, -d);
+  // keep the delimiters and the line breaks inside them as they were
+  const lead = inner.match(/^\s*/)![0];
+  const trail = inner.trim() ? inner.match(/\s*$/)![0] : "";
+  const now = String(edit.now ?? "").trim();
+  if (!now) throw new EditError("The equation can't be empty.");
+  const next = old.slice(0, d) + lead + now + trail + old.slice(-d);
+  const out = src.slice(0, start) + next + src.slice(end);
+  // It must still be one formula, the same one of the file.
+  const after = mathSpans(out);
+  const same = after[edit.where.math.i];
+  if (after.length !== mathSpans(src).length || !same || out.slice(same.start, same.end) !== next) {
+    throw new EditError(
+      d === 2
+        ? "This can't be saved as one equation: it must not contain $$."
+        : "This can't be saved as one formula: it must stay on one line, without a $ that isn't written \\$.",
+    );
+  }
+  return out;
+}
+
+function editFix(src: string, edit: any): string {
+  if (edit.where?.math) throw new EditError("Click an equation to correct it.");
+  const { start, end } = locate(src, edit.where);
+  const now = String(edit.now ?? "").trim().replace(/\n\s*\n/g, "\n");
+  if (/<\/span>/i.test(now)) throw new EditError("A fix can't contain </span>.");
+  const was = src.slice(start, end);
+  if (/\n[ \t]*\r?\n/.test(was)) throw new EditError("A fix has to stay inside one paragraph.");
+  if (codeSpans(src).some((c) => start < c.end && end > c.start)) {
+    throw new EditError("Words inside code can't be marked as a fix.");
+  }
+  // An earlier fix: its words are changed, or it is undone if they are the converted ones again.
+  for (const m of src.matchAll(FIX_SPAN)) {
+    const spanEnd = m.index + m[0].length;
+    if (end <= m.index || start >= spanEnd) continue;
+    const textEnd = spanEnd - "</span>".length;
+    if (start !== textEnd - m[2].length || end !== textEnd) {
+      throw new EditError("These words are part of a fix made earlier. Click that fix to change it.");
+    }
+    const original = fromAttr(m[1]);
+    const squash = (s: string) => s.replace(/\s+/g, " ");
+    const next = squash(now) === squash(original) ? original : `<span class="fix" data-was="${m[1]}">${now}</span>`;
+    return src.slice(0, m.index) + next + src.slice(spanEnd);
+  }
+  if (now === was) return src;
+  return src.slice(0, start) + `<span class="fix" data-was="${toAttr(was)}">${now}</span>` + src.slice(end);
+}
+
+/** The next free N for id="mine-N", looking at every Markdown file of the folder (book.md holds them all). */
+async function nextMineId(file: string): Promise<number> {
+  const dir = dirname(file);
+  let max = 0;
+  const names = (await readdir(dir)).filter((n) => MD_FILE.test(n));
+  await Promise.all(
+    names.map(async (n) => {
+      try {
+        const text = await Bun.file(join(dir, n)).text();
+        for (const m of text.matchAll(/\bmine-(\d+)/g)) max = Math.max(max, Number(m[1]));
+      } catch {}
+    }),
+  );
+  return max + 1;
+}
+
+async function editNote(src: string, edit: any, file: string): Promise<string> {
+  const { start, end } = locate(src, edit.where);
+  const body = String(edit.body ?? "").trim();
+  if (!body) throw new EditError("Write something first.");
+  const code = codeSpans(src);
+  const displayMath = !!edit.where?.math && src.startsWith("$$", start);
+  const marker = edit.kind === "note" && !!edit.marker && !displayMath;
+  if (marker && code.some((c) => end > c.start && end <= c.end)) {
+    throw new EditError("A marker can't be put inside code. Untick it, or select other words.");
+  }
+
+  let note: string;
+  let mark = "";
+  if (edit.kind === "note") {
+    const title = (String(edit.title ?? "").trim() || "My note").replace(/\s+/g, " ").replace(/</g, "&lt;");
+    let id = "";
+    if (marker) {
+      const n = await nextMineId(file);
+      id = ` id="mine-${n}"`;
+      mark = `<sup>[✎](#mine-${n})</sup>`;
+    }
+    note =
+      `<details class="mine"${id}>\n<summary>${title.startsWith("✎") ? title : "✎ " + title}</summary>\n\n` +
+      `${body}\n\n</details>`;
+  } else if (edit.kind === "warning") {
+    note = "> [!WARNING]\n" + body.split(/\r?\n/).map((l) => (l.trim() ? "> " + l : ">")).join("\n");
+  } else {
+    throw new EditError("Unknown kind of note.");
+  }
+
+  // After the block the place is in: at the next empty line (or the end of the file). A place
+  // inside a code block or a table means after the whole of it.
+  let from = end;
+  const fence = code.find((c) => c.fenced && c.start < from && from < c.end);
+  if (fence) from = fence.end;
+  const table = src.lastIndexOf("<table", from);
+  if (table >= 0 && src.lastIndexOf("</table>", from) < table) {
+    const close = src.indexOf("</table>", from);
+    if (close >= 0) from = close + "</table>".length;
+  }
+  const gap = /\r?\n[ \t]*\r?\n/g;
+  gap.lastIndex = from;
+  const at = Math.max(end, gap.exec(src)?.index ?? src.trimEnd().length);
+  const rest = src.slice(at);
+  return src.slice(0, end) + mark + src.slice(end, at) + "\n\n" + note + (rest.trim() ? rest : "\n");
+}
+
+// One change at a time, so two can't read the same file and overwrite each other.
+let editQueue: Promise<unknown> = Promise.resolve();
+
+function saveEdit(file: string, edit: any): Promise<void> {
+  const run = editQueue.then(async () => {
+    const src = await Bun.file(file).text();
+    const out =
+      edit.op === "math" ? editMath(src, edit)
+      : edit.op === "fix" ? editFix(src, edit)
+      : edit.op === "note" ? await editNote(src, edit, file)
+      : null;
+    if (out === null) throw new EditError("Unknown change.");
+    if (out === src) return;
+    try {
+      await Bun.write(file, out);
+    } catch (err) {
+      throw new EditError(`The file couldn't be written: ${(err as Error).message}`);
+    }
+    console.log(`Edited ${file} (${edit.op})`);
+  });
+  editQueue = run.catch(() => {});
+  return run;
+}
+
 // Only answer requests addressed to this machine by name, which defeats DNS rebinding (a web
 // page pointing its own hostname at 127.0.0.1 to read local files).
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -1164,6 +1676,31 @@ const server = Bun.serve({
       const where = open(full, kind);
       console.log(`Opened ${full}`);
       return new Response(`http://localhost:${server.port}${where}\n`);
+    }
+
+    // A page's ✏️ tools change its Markdown file. Only our own pages may ask: a browser says
+    // in the Origin header which site a POST comes from, and another site can't send JSON here
+    // without asking first (which gets no permission).
+    if (pathname === "/__edit") {
+      if (
+        req.method !== "POST" ||
+        req.headers.get("origin") !== url.origin ||
+        !req.headers.get("content-type")?.startsWith("application/json")
+      ) {
+        return Response.json({ error: "Forbidden" }, { status: 403 });
+      }
+      const edit = await req.json().catch(() => null);
+      const file = typeof edit?.path === "string" ? safePath(edit.path) : null;
+      if (!file || !MD_FILE.test(file) || (await kindOf(file)) !== "file") {
+        return Response.json({ error: "This file can't be edited." }, { status: 404 });
+      }
+      try {
+        await saveEdit(file, edit);
+        return Response.json({ ok: true });
+      } catch (err) {
+        if (err instanceof EditError) return Response.json({ error: err.message }, { status: 409 });
+        throw err;
+      }
     }
 
     if (req.method !== "GET" && req.method !== "HEAD") {
