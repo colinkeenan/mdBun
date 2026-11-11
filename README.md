@@ -20,6 +20,14 @@ The 📂 button in the top-right corner opens a dialog listing the `.md` files i
 
 Typing in the dialog's search field and pressing **Search** (or Enter) looks through every `.md` file in the folder shown and all the folders below it, and lists the files that match, each with its number of matches. Search ignores case, looks at the text a page shows (so link addresses and Markdown markup don't count), and finds phrases even when they break across lines. Clicking a result opens that file with a find bar at the bottom, like the browser's Ctrl+F (which a page isn't allowed to open itself): every match is highlighted, it jumps to the first one, and it shows "1 of N". **Enter** or ▼ goes to the next match and **Shift+Enter** or ▲ to the previous one, wrapping around at the ends; each one is scrolled to the middle of the window and its paragraph flashes. You can change the words in the bar to find something else on the page. **Esc** or ✕ closes it and removes the highlighting. Searching for nothing goes back to the folder listing. Hidden folders (starting with `.`) and `node_modules` are skipped, and a search stops after 5000 files.
 
+### Remembering your place
+
+Each file opens where you were last reading it, in any tab and after restarting the server or the browser. The place is remembered as the paragraph at the top of the window rather than a distance, so it is still right when the window is a different width. A link to a place in the file (`#id`) or a search result still opens there instead.
+
+When you leave where you were reading, by following a link within the page, stepping through search matches, or scrolling a long way (more than a window and a half without pausing), the ↩️ button appears in the top-right corner. It takes you back to where you were and flashes the paragraph; pressing it again returns you to where you pressed it, so you can go back and forth between the two places. Stepping through several matches or links in a row still leads back to where you were reading: a new place only replaces it once you have stayed there for half a minute. The button goes away when you scroll back there yourself. If a file opens somewhere other than where you left it (from a `#id` link or a search result), the button leads to where you left it.
+
+Places are kept by the browser (in its storage for `localhost:3000`), not in the files.
+
 ### Light and dark
 
 Pages follow the system's light or dark setting. The ☀️/🌙 button in the top-right corner switches between them; the choice applies to every tab and is remembered. Switching back to match the system forgets the choice, so pages follow the system again.

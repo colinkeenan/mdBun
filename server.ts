@@ -87,15 +87,20 @@ const CSS = `
 
   /* Light/dark toggle. Its icon comes from CSS so the button's HTML never changes, which
      keeps live reload's comparison of old and new pages from seeing a difference in it. */
-  .theme-toggle, .browse-toggle, .edit-toggle {
+  .theme-toggle, .browse-toggle, .edit-toggle, .back-toggle {
                   position: fixed; top: 0.6rem; right: 0.6rem; width: 2.2rem; height: 2.2rem;
                   border: 1px solid #8885; border-radius: 50%; background: Canvas; cursor: pointer;
                   font-size: 1.1rem; line-height: 1; padding: 0; opacity: 0.6; }
   .theme-toggle:hover, .theme-toggle:focus-visible,
   .browse-toggle:hover, .browse-toggle:focus-visible,
-  .edit-toggle:hover, .edit-toggle:focus-visible { opacity: 1; }
+  .edit-toggle:hover, .edit-toggle:focus-visible,
+  .back-toggle:hover, .back-toggle:focus-visible { opacity: 1; }
   .browse-toggle { right: 3.2rem; }
   .edit-toggle { right: 5.8rem; }
+  /* Only there while there is a place to go back to (see PLACE_HEAD). */
+  .back-toggle { right: 8.4rem; display: none; }
+  :root[data-back] .back-toggle { display: block; }
+  .back-toggle::before { content: "↩️"; }
   .edit-toggle::before { content: "✏️"; }
   :root[data-edit] .edit-toggle { opacity: 1; border-color: var(--a-note); box-shadow: 0 0 0 2px var(--a-note); }
   .browse-toggle::before { content: "📂"; }
@@ -104,7 +109,7 @@ const CSS = `
     :root:not([data-theme="light"]) .theme-toggle::before { content: "☀️"; }
   }
   :root[data-theme="dark"] .theme-toggle::before { content: "☀️"; }
-  @media print { .theme-toggle, .browse-toggle, .edit-toggle, .edit-bar { display: none !important; } }
+  @media print { .theme-toggle, .browse-toggle, .edit-toggle, .back-toggle, .edit-bar { display: none !important; } }
 
   /* Editing (the ✏️ button): a bar of buttons, and a dialog for each kind of change. */
   .edit-bar { display: none; position: fixed; top: 0.6rem; left: 0.6rem; z-index: 1;
@@ -113,6 +118,7 @@ const CSS = `
               background: Canvas; border: 1px solid #8885; border-radius: 8px;
               box-shadow: 0 2px 10px #0003; }
   :root[data-edit] .edit-bar { display: flex; }
+  :root[data-back] .edit-bar { max-width: calc(100vw - 12.4rem); }
   .edit-bar button, .edit-dialog button { font: inherit; padding: 0.15rem 0.6rem; cursor: pointer; }
   .edit-msg { color: #888; }
   .edit-msg.bad, .edit-error { color: var(--a-caution); }
@@ -377,6 +383,115 @@ const liveHead = (self: string, isDir = false) => `
       } else {
         listen(null);
       }
+    })();
+  </script>`;
+
+// Remembering the place. Where each file was last being read is kept in localStorage, and the
+// file opens there again (unless its address says where to go: a #target or a search result).
+// And when you leave the place you were reading, by a link, a search, or a long scroll, the \u21A9\uFE0F
+// button appears and takes you back to it; pressing it again returns to where you pressed it.
+//
+// A place is not a number of pixels, which would be wrong as soon as the window is another
+// width: it is the block (child of <body>) at the top of the window and how far through it
+// the top is. The pixels are kept as well, for when the file has changed and the block is gone.
+//
+// Moving more than a window and a half between two pauses counts as leaving, anything less as
+// reading on. Once there is a place to go back to, later jumps don't replace it unless you
+// stayed where you were for a while (DWELL), so stepping through search results or following
+// a few links in a row still leads back to where you were reading. Scrolling back there
+// yourself removes the button.
+//
+// This script must come before liveHead's in <head>: it looks at what a live reload left in
+// sessionStorage before that script removes it, and its load handler must run first.
+// As in BROWSE_HEAD, the script must not use "$" followed by "{", or backticks.
+const PLACE_HEAD = String.raw`
+  <script>
+    (() => {
+      const KEY = "md-place:" + location.pathname, root = document.documentElement;
+      const UI = "script, style, button, dialog, .edit-bar, .find-bar";
+      const DWELL = 30000;
+      // Otherwise the browser's own idea of where to scroll to arrives after ours.
+      try { history.scrollRestoration = "manual"; } catch {}
+
+      const ok = (p) => p && [p.i, p.f, p.y].every(Number.isFinite) ? { i: p.i, f: p.f, y: p.y } : null;
+      let here = null, back = null;
+      try {
+        const saved = JSON.parse(localStorage.getItem(KEY) || "null");
+        here = ok(saved && saved.here);
+        back = ok(saved && saved.back);
+      } catch {}
+      // Something else decides where this page opens: a #target, a search result, or a live
+      // reload (which keeps its place, or shows the edit). The remembered place is then what
+      // the button goes back to, if the page opens far from it.
+      let elsewhere = !!location.hash || !!new URLSearchParams(location.search).get("find");
+      try { elsewhere = elsewhere || sessionStorage.getItem("md-live-scroll") !== null; } catch {}
+
+      // rest: where you are reading, and since when you have been around there. The place a
+      // file was left at has been read for long enough: since 0.
+      let rest = here && { pos: here, since: 0 };
+      let ready = false, timer;
+
+      const block = (i) => {
+        const el = document.body.children[i];
+        return el && !el.matches(UI) ? el : null;
+      };
+      function where() {
+        const kids = document.body.children;
+        for (let i = 0; i < kids.length; i++) {
+          if (kids[i].matches(UI)) continue;
+          const r = kids[i].getBoundingClientRect();
+          if (r.height > 0 && r.bottom > 0) return { i, f: -r.top / r.height, y: scrollY };
+        }
+        return { i: -1, f: 0, y: scrollY };
+      }
+      /** How far down the page has to be scrolled to be at this place. */
+      function yOf(pos) {
+        const el = block(pos.i);
+        const r = el && el.getBoundingClientRect();
+        return r && r.height > 0 ? r.top + scrollY + pos.f * r.height : pos.y;
+      }
+
+      // Called when scrolling pauses.
+      function settle() {
+        if (!ready) return;
+        const now = Date.now(), p = where();
+        if (!rest) {
+          rest = { pos: p, since: now };
+        } else if (Math.abs(p.y - yOf(rest.pos)) > innerHeight * 1.5) {
+          if (!back || now - rest.since >= DWELL) back = rest.pos;
+          rest = { pos: p, since: now };
+        } else {
+          rest.pos = p;
+        }
+        here = p;
+        if (back && Math.abs(p.y - yOf(back)) < innerHeight * 0.75) back = null; // you are back
+        root.toggleAttribute("data-back", !!back);
+        try { localStorage.setItem(KEY, JSON.stringify({ here, back })); } catch {}
+      }
+
+      addEventListener("load", () => {
+        if (here && !elsewhere) scrollTo(0, yOf(here));
+        // The load handlers after this one may scroll (to a #target, a match, an edit).
+        setTimeout(() => { ready = true; settle(); });
+      });
+      addEventListener("scroll", () => { clearTimeout(timer); timer = setTimeout(settle, 250); }, { passive: true });
+      addEventListener("pagehide", () => { clearTimeout(timer); settle(); });
+
+      document.addEventListener("click", (e) => {
+        if (!back || !e.target.closest || !e.target.closest(".back-toggle")) return;
+        clearTimeout(timer);
+        const to = back;
+        back = where();
+        rest = { pos: to, since: 0 };
+        scrollTo(0, yOf(to));
+        const el = block(to.i);
+        if (el) {
+          el.classList.remove("md-flash");
+          void el.offsetWidth; // restart the animation
+          el.classList.add("md-flash");
+        }
+        settle();
+      });
     })();
   </script>`;
 
@@ -892,6 +1007,11 @@ const editTools = (checklist: boolean) => `<button class="edit-toggle" type="but
 <dialog class="edit-dialog" aria-label="Edit"></dialog>
 `;
 
+// Its HTML never changes (the page shows it by setting data-back on <html>), so live reload's
+// comparison of old and new pages sees no difference in it.
+const BACK_BUTTON = `<button class="back-toggle" type="button" aria-label="Back to where you were" title="Back to where you were"></button>
+`;
+
 const clients = new Set<ReadableStreamDefaultController<Uint8Array>>();
 const encoder = new TextEncoder();
 
@@ -952,6 +1072,8 @@ function page(
     dir?: boolean;
     /** Show the browse button, starting in this folder (a URL ending in "/"). */
     browse?: string;
+    /** Remember where the page was being read, and show the ↩️ button (see PLACE_HEAD). */
+    place?: boolean;
     /** Show the edit button; checklist: the folder has a check-equations.md to link to. */
     edit?: { checklist: boolean };
   } = {},
@@ -962,11 +1084,11 @@ function page(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
-  <style>${CSS}</style>${THEME_HEAD}${opts.live ? liveHead(opts.live, opts.dir) : ""}${opts.browse ? BROWSE_HEAD : ""}${opts.edit ? EDIT_HEAD : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
+  <style>${CSS}</style>${THEME_HEAD}${opts.place ? PLACE_HEAD : ""}${opts.live ? liveHead(opts.live, opts.dir) : ""}${opts.browse ? BROWSE_HEAD : ""}${opts.edit ? EDIT_HEAD : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
 </head>
 <body>
 ${body}
-${opts.browse ? browseDialog(opts.browse) : ""}${opts.edit ? editTools(opts.edit.checklist) : ""}<button class="theme-toggle" type="button" aria-label="Switch between light and dark" title="Switch between light and dark"></button>
+${opts.browse ? browseDialog(opts.browse) : ""}${opts.edit ? editTools(opts.edit.checklist) : ""}${opts.place ? BACK_BUTTON : ""}<button class="theme-toggle" type="button" aria-label="Switch between light and dark" title="Switch between light and dark"></button>
 </body>
 </html>`;
   return new Response(html, {
@@ -1190,6 +1312,7 @@ async function renderFile(path: string) {
     code,
     live: LIVE_RELOAD ? path : undefined,
     browse: dirUrl(dirname(path)),
+    place: true,
     edit: { checklist },
   });
 }
