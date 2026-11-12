@@ -1,79 +1,47 @@
 # mdBun
 
-Serve `.md` files to `html` on `localhost:3000`on Linux or Termux on Android
+mdBun shows Markdown files in your browser. Run `md book/` or `md notes.md` and the file opens as a web page on `localhost:3000`, with math typeset, links between files working, and a tab per file. It runs on Linux and in Termux on Android, on [Bun](https://bun.sh) with no other dependencies.
 
-Both `server.ts` and `package.json` were written by Claude free. I asked it to make a markdown to html server that would run using bun in a terminal by using bun's built-in markdown capability. I also asked it to render math and html for expandable content, and to simply open the .md file provided on the command line. What it came up with works perfectly without any dependencies but requires internet access in order to access highlight.js CDN and KaTeX. It offered to bundle KaTex and highlight.js locally to make it work offline, but I'd rather keep it working without dependencies. I wrote the desktop file and bash script with a little help from Copilot on the web.
+It was written to read textbooks converted by [pdf2md](https://github.com/colinkeenan/pdf2md), but it works with any folder of Markdown.
 
-Since November 2026 the rest has been written by Claude in [Claude Code](https://claude.com/claude-code) (Opus 5.5, then Fable 5.2), working from my requests: linked files, a tab per file, folder listings, browse and search, the light/dark toggle, editing, and remembering your place, along with the changes to `md` and this README that go with them. Each commit says which model wrote it.
+## What it does
 
-### Linked Markdown files
+* **Renders GitHub-style Markdown**, including tables, footnotes (`[^1]`), alert boxes (`> [!NOTE]`), collapsible `<details>`, emoji shortcodes and raw HTML.
+* **Typesets math** with KaTeX and highlights code with highlight.js. Both are loaded from a CDN, so they need an internet connection; without one the page shows the TeX source.
+* **Follows links between files**, so a table of contents that links to one file per chapter works like a small website.
+* **Lists a folder's Markdown files**, and lets you browse and search them from any page.
+* **Remembers your place** in every file.
+* **Edits the file from the page**: correct an equation, fix a word, add a note.
+* **Reloads a page** when its file changes.
 
-Links to other `.md` files are rendered as HTML too, so a table of contents that links to one file per chapter works like a small website. Links into subfolders (`chapters/ch1.md`), back up (`../toc.md`), and to headings (`ch1.md#section-a`) all work. Only files inside the folder of a `.md` file you opened with `md` (and its subfolders) can be reached, so open the top-level file (e.g. the table of contents) rather than a chapter in a subfolder.
+## Reading books from pdf2md
 
-Following a link to a place in a page (`#id`: an index entry, a footnote, a heading) scrolls it to the middle of the window and briefly flashes it, so you can see where you landed. This also happens when the page is opened with that `#id` in its address, and again when you click the same link twice.
+[pdf2md](https://github.com/colinkeenan/pdf2md) converts a PDF textbook into a folder of Markdown: one file per chapter, formulas as LaTeX, and the contents, index and footnotes as links. The two programs are made to work together.
 
-### Folders
+* **Math in either form.** pdf2md can write formulas [for GitHub or in the standard form](https://github.com/colinkeenan/pdf2md#math-github-or-standard). mdBun reads both and shows them the same, with equation numbers at the right margin.
+* **Corrections that last.** What you change with mdBun's editing buttons is written in the marks that pdf2md [keeps when it converts the book again](https://github.com/colinkeenan/pdf2md#correcting-and-annotating-a-book).
+* **Equations to check.** pdf2md lists the equations it is least sure of in `check-equations.md`. mdBun adds a button for that list when the folder has one.
+* **Page markers** in a converted book open that page of the PDF in a new tab.
 
-`md some/folder` (or `md` with no argument, for the current folder) shows a page listing the folder's `.md` files, sorted so `chapter2.md` comes before `chapter10.md`, each with its `# title` beside the name. Subfolders are listed too if there is a `.md` file somewhere inside them (at any depth), and `../` leads back up as long as it's still inside a folder opened with `md`. Opening a folder lets its files and subfolders be reached, just like opening a file in it. The listing updates by itself when files are added, removed, renamed, or retitled.
+In pdf2md's window, enter `md` as the Reader and "Open Book" starts mdBun on the book.
 
-### Browse and search
+## Install
 
-The 📂 button in the top-right corner opens a dialog listing the `.md` files in the current page's folder and its subfolders that have `.md` files somewhere inside, with `../` to go up (as far as folders opened with `md` allow). Picking a folder shows its contents in the dialog; picking a file shows it in the tab. Middle- or ctrl-clicking opens either in a new tab instead.
-
-Typing in the dialog's search field and pressing **Search** (or Enter) looks through every `.md` file in the folder shown and all the folders below it, and lists the files that match, each with its number of matches. Search ignores case, looks at the text a page shows (so link addresses and Markdown markup don't count), and finds phrases even when they break across lines. Clicking a result opens that file with a find bar at the bottom, like the browser's Ctrl+F (which a page isn't allowed to open itself): every match is highlighted, it jumps to the first one, and it shows "1 of N". **Enter** or ▼ goes to the next match and **Shift+Enter** or ▲ to the previous one, wrapping around at the ends; each one is scrolled to the middle of the window and its paragraph flashes. You can change the words in the bar to find something else on the page. **Esc** or ✕ closes it and removes the highlighting. Searching for nothing goes back to the folder listing. Hidden folders (starting with `.`) and `node_modules` are skipped, and a search stops after 5000 files.
-
-### Remembering your place
-
-Each file opens where you were last reading it, in any tab and after restarting the server or the browser. The place is remembered as the paragraph at the top of the window rather than a distance, so it is still right when the window is a different width. A link to a place in the file (`#id`) or a search result still opens there instead.
-
-When you leave where you were reading, by following a link within the page, stepping through search matches, or scrolling a long way (more than a window and a half without pausing), the ↩️ button appears in the top-right corner. It takes you back to where you were and flashes the paragraph; pressing it again returns you to where you pressed it, so you can go back and forth between the two places. Stepping through several matches or links in a row still leads back to where you were reading: a new place only replaces it once you have stayed there for half a minute. The button goes away when you scroll back there yourself. If a file opens somewhere other than where you left it (from a `#id` link or a search result), the button leads to where you left it.
-
-Places are kept by the browser (in its storage for `localhost:3000`), not in the files.
-
-### Light and dark
-
-Pages follow the system's light or dark setting. The ☀️/🌙 button in the top-right corner switches between them; the choice applies to every tab and is remembered. Switching back to match the system forgets the choice, so pages follow the system again.
-
-### Editing
-
-The ✏️ button in the top-right corner turns editing on for the tab (it stays on when you follow links, until you press it again) and shows a bar of buttons. Every change is written to the `.md` file itself, and the page then reloads and flashes what changed. The buttons write the marks that [pdf2md](https://github.com/colinkeenan/pdf2md) keeps when it converts a book again, but they work in any Markdown file:
-
-* **Click an equation** to correct it: its TeX opens with a preview that follows your typing, and KaTeX's complaint if it can't be typeset. **Save** (or Ctrl+Enter) writes it where it stands in the file. **Note after it…** and **Warning after it…** add one of your own under the equation instead.
-* **Fix text**: select words the conversion got wrong, press the button, and type them as the book has them. They are written as `<span class="fix" data-was="as converted">as in the book</span>`, which reads as normal text. While editing, fixes are underlined with dots; click one to change it or to undo it.
-* **Note**: select words and press the button to add a collapsible note of your own (`<details class="mine">`) after their paragraph. Tick the box to also put a ✎ marker right after the selected words (`<sup>[✎](#mine-N)</sup>`); clicking the marker opens the note.
-* **Warning**: the same, for a box that is always visible (`> [!WARNING]`), e.g. where you think the book is wrong.
-* **Equations to check** appears when the folder has a `check-equations.md` (pdf2md's list of the equations most worth comparing with the book) and opens it. Start with its "Big differences" section: each entry leads to its equation, which you then click to correct.
-
-Notes and warnings are Markdown and can have `$math$` in them. (Math is read in four forms: `$…$` and `$$…$$`, and the two that GitHub shows right whatever the formula holds, ``$`…`$`` in a sentence and a block fenced with ```` ```math ````. In the first two GitHub reads the TeX as Markdown first, so `A^{*} B^{*}` turns italic and `\\` loses a backslash; mdBun shows all four the same.) To change or remove one later, click it while editing: its Markdown opens to change, and **Delete** (pressed twice, since what you wrote is gone for good) removes it along with its ✎ marker. A note's title still opens and closes it, and links in it still work. This goes for any alert box (`> [!NOTE]`, `> [!TIP]`, …), not just warnings; in a book converted by pdf2md they are all yours, since pdf2md never writes one. A file with an alert box inside a list, a footnote or another quote has its alert boxes changed in the file itself, because the page can't then say for sure which one you clicked.
-
-To find selected words in the file, the page says which occurrence of them it is (the 3rd of 7, say) and the server counts the same words in the file. If the counts differ, because the selection has a formula, a link or *emphasis* in it, or is in a footnote, nothing is changed and you are asked to select a few plain words instead. Only pages served by mdBun can ask for changes, and only to `.md` files in folders opened with `md`.
-
-### Multiple tabs
-
-Each file gets its own address based on its full path, like `http://localhost:3000/home/me/book/toc.md`, so every tab can show a different file, from the same folder or different ones. Running `md` while the server is already running adds the file to it and opens a new tab, instead of restarting the server, so tabs that are already open keep working. The server keeps running until you stop it (e.g. `fuser -k 3000/tcp`). Restarting it means files in folders other than the one you start it with show "Not available" until you run `md` on them again.
-
-Live reload watches only the folders of files being shown. Each tab reloads only when its own file, or an image it shows, changes, so editing one chapter doesn't disturb a tab showing another. Only one tab at a time keeps a connection open to the server for this and passes changes on to the others, because browsers allow just 6 connections to one server: if every tab kept its own, opening a 7th page would hang.
-
-The server only listens on `127.0.0.1`, so other machines can't reach it.
-
-Whether running on Linux or Termux on Android, the first step is to simply clone this repo.
+Clone this repository and install [Bun](https://bun.sh). The `md` script also needs `curl`, and on Linux `fuser` (package `psmisc`).
 
 ### Linux
 
-1. Edit `mdBun.destop` to have the correct path to an icon (or remove path to icon).
-1. Put `mdBun.desktop` in `~/.local/share/applications`.
-1. Edit `md` to have the correct path to `mdBun`, `chmod +x md`, and put `md` in `/usr/local/bin`.
-1. In a file browser, set the default application for opening `.md` files to `mdBun`.
-1. The desktop file also registers mdBun for folders (`inode/directory`) so it appears under **Open With** when you right-click a folder in Dolphin. So that it never takes over opening folders, make sure your file manager stays the default: `xdg-mime default org.kde.dolphin.desktop inode/directory`, then `update-desktop-database ~/.local/share/applications`.
+1. In `md`, set the path in the `cd` line to where you cloned mdBun. Then `chmod +x md` and copy it to `/usr/local/bin`.
+2. In `mdBun.desktop`, set `Icon=` to an icon of your choice, or remove the line. Copy the file to `~/.local/share/applications`.
+3. In your file manager, make mdBun the default application for `.md` files.
 
-Run in terminal with `md file.md` for whatever`file.md` you want, or `md folder` for a list of its `.md` files.  
-Run in GUI by clicking the `.md` file from the file browser, or right-click a folder and choose **Open With → mdBun**.
+The desktop file also offers mdBun under **Open With** for folders. To keep your file manager as the default for folders, run `xdg-mime default org.kde.dolphin.desktop inode/directory` (with your file manager's desktop file) and then `update-desktop-database ~/.local/share/applications`.
 
 ### Termux on Android
 
-1. Give Termux permision to run over other apps and for battery usage to run in background.
-1. Ignore mdBun.destop.
-1. Edit `md` to have correct path to `mdBun` and correct launcher. (You may have to install additional apps to get `grun` and `curl` to work). Change the command that kills an old running server. Here is the `md` that works for me:
+1. Allow Termux to display over other apps and to run in the background without battery limits.
+2. Use this `md` in place of the one in the repository. It differs in the launcher (`grun`), in how it stops an old server, and in how it opens the browser. You may need to install packages to get `grun` and `curl`.
+
    ```bash
    #!/bin/bash
    file="$(realpath "$1")"
@@ -99,16 +67,94 @@ Run in GUI by clicking the `.md` file from the file browser, or right-click a fo
 
    termux-open-url "$url"
    ```
-1. Execute the following commands in Termux:
+
+3. Install it, and make it what Termux runs when another app sends it a file:
+
    ```bash
    chmod +x md
-   mv md /data/data/com.termux/files/urs/bin/md
+   mv md /data/data/com.termux/files/usr/bin/md
    ln -s /data/data/com.termux/files/usr/bin/md ~/bin/termux-file-editor
    ```
-1. The Fluffy file browser works well with this. Press a .md file in Fluffy (don't bother to checkmark), choose to open with "Termux" and choose "Edit". It will run `~/bin/termux-file-editor` in Termux which is the `md` command and the chosen `.md` file will be displayed in your default browser.
+
+4. In a file manager such as Fluffy, tap a `.md` file, open it with Termux and choose "Edit". The file appears in your default browser.
+
+## Use
+
+```sh
+md notes.md     # show a file
+md book/        # list a folder's Markdown files
+md              # the same, for the current folder
+```
+
+On Linux you can also click a `.md` file in the file manager, or right-click a folder and choose **Open With → mdBun**.
+
+The first `md` starts the server. Later ones add their file to the running server and open a new tab, so open tabs keep working. The server runs until you stop it, for example with `fuser -k 3000/tcp`. It listens only on `127.0.0.1`, so other machines cannot reach it.
+
+**Which files can be reached.** A page can link to any `.md` file in a folder you opened with `md`, or below it, and to nothing outside. Open the top-level file or the folder itself, not a chapter in a subfolder. After the server restarts, folders other than the one it was started with show "Not available" until you run `md` on them again.
+
+Two environment variables change the server: `PORT` sets a port other than 3000, and `LIVE_RELOAD=0` turns reloading off.
+
+### Links
+
+Links to other `.md` files, into subfolders, back up (`../toc.md`) and to headings (`ch1.md#section-a`) all work. Following a link to a place in a page, such as an index entry or a footnote, scrolls that place to the middle of the window and flashes it briefly, so you can see where you landed.
+
+### Folders, browsing and search
+
+A folder's page lists its `.md` files in natural order (`chapter2.md` before `chapter10.md`), each with its title, and the subfolders that hold Markdown somewhere inside. The list updates itself when files change.
+
+The 📂 button on any page opens the same listing in a dialog. Pick a file to show it in the tab; middle-click or Ctrl-click opens it in a new tab.
+
+Type in the dialog's search field and press **Search** to look through every `.md` file in the folder shown and below it. Search ignores case, looks at the text a page shows and not at markup or link addresses, and finds phrases that break across lines. The results list each matching file with its number of matches.
+
+Clicking a result opens the file with a find bar at the bottom. Every match is highlighted. **Enter** or ▼ goes to the next match, **Shift+Enter** or ▲ to the previous one, and **Esc** closes the bar. You can change the words in the bar to find something else on the page.
+
+Search skips hidden folders and `node_modules`, and stops after 5000 files.
+
+### Your place
+
+Each file opens where you were last reading it, in any tab and after a restart of the server or the browser. The place is kept as the paragraph at the top of the window, so it is still right at a different window width. A link to a place in the file, or a search result, opens there instead.
+
+When you leave where you were reading, by following a link within the page, stepping through matches, or scrolling a long way, a ↩️ button appears. It takes you back; pressing it again returns you to where you pressed it. A new place replaces the old one only after you have stayed there for half a minute, so a chain of links still leads back to where you started.
+
+Places are kept by the browser, in its storage for `localhost:3000`, not in the files.
+
+### Light and dark
+
+Pages follow the system's light or dark setting. The ☀️/🌙 button switches, for every tab, and the choice is remembered. Switching back to what the system uses makes pages follow the system again.
+
+### Editing
+
+The ✏️ button turns editing on for the tab and shows a bar of buttons. Every change is written to the `.md` file itself; the page then reloads and flashes what changed.
+
+* **Correct an equation**: click it. Its TeX opens with a preview that follows your typing and shows KaTeX's complaint if it cannot be typeset. **Save** or Ctrl+Enter writes it.
+* **Fix text**: select the words that are wrong, press the button and type them as they should be. The fix is written as `<span class="fix" data-was="…">`, which reads as normal text. While editing, fixes are underlined with dots; click one to change or undo it.
+* **Note**: select words and press the button to add a collapsible note after their paragraph. Tick the box to also put a ✎ marker after the selected words; clicking the marker opens the note.
+* **Warning**: the same, as a box that is always visible, for example where you think the book is wrong.
+* **Equations to check** opens `check-equations.md` if the folder has one.
+
+Notes and warnings are Markdown and can hold math. To change or remove one, click it while editing. **Delete** has to be pressed twice, since what you wrote is gone for good.
+
+Two limits:
+
+* **Selections must be plain words.** The page tells the server which occurrence of the selected words it means, and the server counts the same words in the file. If the selection includes a formula, a link or emphasis, or is in a footnote, the counts differ. Nothing is changed and you are asked to select a few plain words instead.
+* **Alert boxes inside a list, a footnote or another quote** cannot be told apart from the page, so in a file that has one, change alert boxes in the file itself.
+
+Only pages served by mdBun can ask for changes, and only to `.md` files in folders opened with `md`.
+
+### Math
+
+mdBun reads math in four forms: `$…$` and `$$…$$`, and the two that GitHub shows correctly whatever the formula contains, ``$`…`$`` in a sentence and a block fenced with ```` ```math ````. All four look the same in mdBun.
+
+### Tabs and reloading
+
+Each file has its own address from its full path, such as `http://localhost:3000/home/me/book/toc.md`, so every tab can show a different file. A tab reloads only when its own file, or an image it shows, changes.
+
+## History
+
+The first `server.ts` was written in a chat with Claude: a Markdown-to-HTML server on Bun's built-in Markdown, with math and expandable content. Colin Keenan wrote the `md` script and the desktop file. Since November 2026 the rest has been written by Claude in [Claude Code](https://claude.com/claude-code) (Opus 5.5, then Fable 5.2), working from his requests. Each commit says which model wrote it.
 
 ## Licence
 
 Copyright (C) 2026 Colin Keenan
 
-mdBun is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It comes with no warranty. See [LICENSE](LICENSE) for the full text.
+mdBun is free software under the GNU Affero General Public License, version 3 or later. It comes with no warranty. See [LICENSE](LICENSE) for the full text.
