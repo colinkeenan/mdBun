@@ -212,7 +212,10 @@ const KATEX_HEAD = `
       for (const el of document.querySelectorAll(".math")) {
         const display = el.classList.contains("display");
         const src = el.textContent;
-        const tex = src.slice(Number(el.dataset.open), src.length - Number(el.dataset.close)).trim();
+        let tex = src.slice(Number(el.dataset.open), src.length - Number(el.dataset.close)).trim();
+        // An equation's number written behind it as text (pdf2md does: GitHub breaks an
+        // equation with a \\tag into a column of symbols) goes to the right margin here.
+        if (display) tex = tex.replace(/\\\\qquad \\\\text\\{\\(([^{}]*)\\)\\}$/, "\\\\tag{$1}");
         try {
           katex.render(tex, el, { displayMode: display, throwOnError: false });
         } catch (e) {
