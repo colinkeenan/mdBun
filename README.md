@@ -21,6 +21,7 @@ It was written to read textbooks converted by [pdf2md](https://github.com/colink
 * **Math in either form.** pdf2md can write formulas [for GitHub or in the standard form](https://github.com/colinkeenan/pdf2md#math-github-or-standard). mdBun reads both and shows them the same, with equation numbers at the right margin.
 * **Corrections that last.** What you change with mdBun's editing buttons is written in the marks that pdf2md [keeps when it converts the book again](https://github.com/colinkeenan/pdf2md#correcting-and-annotating-a-book).
 * **Equations to check.** pdf2md lists the equations it is least sure of in `check-equations.md`. mdBun adds a button for that list when the folder has one.
+* **Index terms in blue.** Some words in a converted book are blue like links but do nothing when clicked. They are the words the book's index points to: pdf2md marks them so an index link can land on them, and mdBun colours every such mark. They are most noticeable in section titles.
 * **Page markers** in a converted book open that page of the PDF in a new tab.
 
 In pdf2md's window, enter `md` as the Reader and "Open Book" starts mdBun on the book.
