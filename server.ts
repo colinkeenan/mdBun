@@ -211,7 +211,8 @@ const KATEX_HEAD = `
       if (!window.katex) return; // CDN unreachable: the TeX source stays visible
       for (const el of document.querySelectorAll(".math")) {
         const display = el.classList.contains("display");
-        const tex = el.textContent.trim().replace(display ? /^\\$\\$|\\$\\$$/g : /^\\$|\\$$/g, "");
+        const src = el.textContent;
+        const tex = src.slice(Number(el.dataset.open), src.length - Number(el.dataset.close)).trim();
         try {
           katex.render(tex, el, { displayMode: display, throwOnError: false });
         } catch (e) {
@@ -898,8 +899,7 @@ const EDIT_HEAD = String.raw`
           const src = texOf.get(el);
           if (src == null) return;
           const display = el.classList.contains("display");
-          const d = display ? 2 : 1;
-          const tex = src.slice(d, -d).trim();
+          const tex = src.slice(Number(el.dataset.open), src.length - Number(el.dataset.close)).trim();
           const where = { math: { i: Number(el.dataset.i), was: src } };
           const form = ask("Correct this equation",
             '<textarea name="tex" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="The equation in TeX"></textarea>' +
@@ -1150,22 +1150,38 @@ ${opts.browse ? browseDialog(opts.browse) : ""}${opts.edit ? editTools(opts.edit
  * Markdown mangles LaTeX (it eats backslashes in `\{` / `\,` / `\\` and turns `*` and `_`
  * into emphasis), so lift math out first, render the Markdown, then put the untouched
  * source back for KaTeX to typeset. Code blocks/spans are skipped so `$` in code is safe.
+ *
+ * Math is also read in the two forms GitHub leaves untouched (in "$" and "$$" it mangles the
+ * LaTeX the same way): a block fenced with ```math, and $`…`$ in a sentence.
  */
 const PROTECT = new RegExp(
   [
-    "^(`{3,}|~{3,})[^\\n]*\\n[\\s\\S]*?^\\1[ \\t]*$", // 1: fenced code  (kept as is)
-    "(`+)(?:(?!\\2)[\\s\\S])+?\\2", // 2: inline code (kept as is)
+    "^(```math[ \\t]*\\n[\\s\\S]*?^```)[ \\t]*$", // 1: display math, fenced
+    "(\\$`[^`]+`\\$)", // 2: inline math, in backticks
+    "^(`{3,}|~{3,})[^\\n]*\\n[\\s\\S]*?^\\3[ \\t]*$", // 3: fenced code  (kept as is)
+    "(`+)(?:(?!\\4)[\\s\\S])+?\\4", // 4: inline code (kept as is)
     "\\\\\\$", // escaped \$ (kept as is)
-    "(\\$\\$[\\s\\S]+?\\$\\$)", // 3: display math
-    "(\\$(?=\\S)(?:\\\\.|[^$\\\\\\n])+?(?<=\\S)\\$(?!\\d))", // 4: inline math
+    "(\\$\\$[\\s\\S]+?\\$\\$)", // 5: display math
+    "(\\$(?=\\S)(?:\\\\.|[^$\\\\\\n])+?(?<=\\S)\\$(?!\\d))", // 6: inline math
   ].join("|"),
   "gm",
 );
 
+/** The formula a match of PROTECT holds, as written in the file (undefined: it is code). */
+const mathOf = (groups: (string | undefined)[]) => groups[0] ?? groups[1] ?? groups[4] ?? groups[5];
+
+/** How a formula is written: is it a displayed one, and how long are the marks around it. */
+function mathMarks(math: string): { display: boolean; open: number; close: number } {
+  if (math.startsWith("```")) return { display: true, open: math.indexOf("\n") + 1, close: 4 };
+  if (math.startsWith("$`")) return { display: false, open: 2, close: 2 };
+  if (math.startsWith("$$")) return { display: true, open: 2, close: 2 };
+  return { display: false, open: 1, close: 1 };
+}
+
 function protectMath(src: string) {
   const stash: string[] = [];
-  const text = src.replace(PROTECT, (m, _fence, _tick, display, inline) => {
-    const math = display ?? inline;
+  const text = src.replace(PROTECT, (m, ...groups) => {
+    const math = mathOf(groups);
     if (!math) return m;
     stash.push(math);
     return `ZZMATH${stash.length - 1}ZZ`;
@@ -1176,9 +1192,11 @@ function protectMath(src: string) {
 function restoreMath(html: string, stash: string[]) {
   return html.replace(/ZZMATH(\d+)ZZ/g, (_, i) => {
     const math = stash[Number(i)];
-    const cls = math.startsWith("$$") ? "math display" : "math inline";
-    // data-i: which formula of the file it is, so the page can ask to correct it
-    return `<span class="${cls}" data-i="${i}">${escapeHtml(math)}</span>`;
+    const { display, open, close } = mathMarks(math);
+    const cls = display ? "math display" : "math inline";
+    // data-i: which formula of the file it is, so the page can ask to correct it;
+    // data-open, data-close: how long the marks around the TeX are
+    return `<span class="${cls}" data-i="${i}" data-open="${open}" data-close="${close}">${escapeHtml(math)}</span>`;
   });
 }
 
@@ -1615,7 +1633,8 @@ type Span = { start: number; end: number };
 function mathSpans(src: string): Span[] {
   const spans: Span[] = [];
   for (const m of src.matchAll(PROTECT)) {
-    if (m[3] ?? m[4]) spans.push({ start: m.index, end: m.index + m[0].length });
+    const math = mathOf(m.slice(1));
+    if (math) spans.push({ start: m.index, end: m.index + math.length });
   }
   return spans;
 }
@@ -1635,7 +1654,7 @@ const codeSpans = (src: string) =>
 function shownText(src: string): string {
   const blank = (m: string) => "\0".repeat(m.length);
   return src
-    .replace(PROTECT, (m, _fence, _tick, display, inline) => ((display ?? inline) ? blank(m) : m))
+    .replace(PROTECT, (m, ...groups) => (mathOf(groups) ? blank(m) : m))
     .replace(FOOTNOTE_DEF, blank)
     .replace(/<!--[\s\S]*?-->|<\/?[a-zA-Z][^<>]*>|!\[[^\]\n]*\]\([^)\n]*\)|\]\([^)\n]*\)/g, blank);
 }
@@ -1667,23 +1686,35 @@ const fromAttr = (s: string) =>
 function editMath(src: string, edit: any): string {
   const { start, end } = locate(src, { math: edit.where?.math ?? {} });
   const old = src.slice(start, end);
-  const d = old.startsWith("$$") ? 2 : 1;
-  const inner = old.slice(d, -d);
+  const { display, open, close } = mathMarks(old);
+  const inner = old.slice(open, old.length - close);
   // keep the delimiters and the line breaks inside them as they were
   const lead = inner.match(/^\s*/)![0];
   const trail = inner.trim() ? inner.match(/\s*$/)![0] : "";
   const now = String(edit.now ?? "").trim();
   if (!now) throw new EditError("The equation can't be empty.");
-  const next = old.slice(0, d) + lead + now + trail + old.slice(-d);
+  // (the check below would take these for a formula in "$", which they would no longer be
+  // on GitHub)
+  if (old.startsWith("$`") && now.includes("`")) {
+    throw new EditError("This can't be saved as one formula: it must not contain a backtick (`).");
+  }
+  if (old.startsWith("```") && /^```/m.test(now)) {
+    throw new EditError("This can't be saved as one equation: no line of it may start with ```.");
+  }
+  const next = old.slice(0, open) + lead + now + trail + old.slice(old.length - close);
   const out = src.slice(0, start) + next + src.slice(end);
   // It must still be one formula, the same one of the file.
   const after = mathSpans(out);
   const same = after[edit.where.math.i];
   if (after.length !== mathSpans(src).length || !same || out.slice(same.start, same.end) !== next) {
     throw new EditError(
-      d === 2
-        ? "This can't be saved as one equation: it must not contain $$."
-        : "This can't be saved as one formula: it must stay on one line, without a $ that isn't written \\$.",
+      !old.startsWith("$$") && !old.startsWith("$`") && display
+        ? "This can't be saved as one equation."
+        : old.startsWith("$`")
+          ? "This can't be saved as one formula."
+          : display
+            ? "This can't be saved as one equation: it must not contain $$."
+            : "This can't be saved as one formula: it must stay on one line, without a $ that isn't written \\$.",
     );
   }
   return out;
@@ -1737,7 +1768,7 @@ async function editNote(src: string, edit: any, file: string): Promise<string> {
   const body = String(edit.body ?? "").trim();
   if (!body) throw new EditError("Write something first.");
   const code = codeSpans(src);
-  const displayMath = !!edit.where?.math && src.startsWith("$$", start);
+  const displayMath = !!edit.where?.math && mathMarks(src.slice(start, end)).display;
   const marker = edit.kind === "note" && !!edit.marker && !displayMath;
   if (marker && code.some((c) => end > c.start && end <= c.end)) {
     throw new EditError("A marker can't be put inside code. Untick it, or select other words.");
