@@ -40,23 +40,29 @@ The desktop file also offers mdBun under **Open With** for folders. To keep your
 ### Termux on Android
 
 1. Allow Termux to display over other apps and to run in the background without battery limits.
-2. Use this `md` in place of the one in the repository. It differs in the launcher (`grun`), in how it stops an old server, and in how it opens the browser. You may need to install packages to get `grun` and `curl`.
+2. Use this `md` in place of the one in the repository. It is the same script with four lines changed for Termux: the folder mdBun is in, the launcher (`grun` and the full path to `bun`), how an old server is stopped (`pkill`), and how the browser is opened (`termux-open-url`). You may need to install packages to get `grun` and `curl`.
 
    ```bash
    #!/bin/bash
-   file="$(realpath "$1")"
+   # Show a Markdown file in the browser, or a folder as a list of links to its Markdown files.
+   # One server shows any number of files, each in its own tab: if it's already running, the file
+   # is added to it; otherwise it's started. With no argument, the current folder is shown.
+   file="$(realpath "${1:-.}")" || exit 1
 
+   # Ask the server to add the file or folder; it prints its URL.
    open_file() {
        curl -sf --data-urlencode "path=$file" http://localhost:3000/__open
    }
 
    if ! url=$(open_file); then
+       # Nothing is running, or an old server without /__open is: replace it.
        pkill -f server.ts
 
        cd "$HOME/mdBun" || exit 1
 
-       setsid grun "$HOME/.bun/bin/bun" run server.ts "$file" > "$HOME/mdbun.log" 2>&1 &
+       setsid grun "$HOME/.bun/bin/bun" run server.ts "$file" >"$HOME/mdbun.log" 2>&1 &
 
+       # Wait up to 10 seconds for it to start.
        for _ in {1..100}; do
            url=$(open_file) && break
            sleep 0.1
