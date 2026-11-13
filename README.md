@@ -79,7 +79,7 @@ md              # the same, for the current folder
 
 On Linux you can also click a `.md` file in the file manager, or right-click a folder and choose **Open With → mdBun**.
 
-The first `md` starts the server. Later ones add their file to the running server and open a new tab, so open tabs keep working. The server runs until you stop it, for example with `fuser -k 3000/tcp`. It listens only on `127.0.0.1`, so other machines cannot reach it.
+The first `md` starts the server. Later ones add their file to the running server and open a new tab, so open tabs keep working. The server runs until you stop it, for example with `fuser -k 3000/tcp`. Stop it after you update mdBun (`git pull`), too: it loads its code when it starts, so a running server keeps the old version until the next `md` starts a new one. It listens only on `127.0.0.1`, so other machines cannot reach it.
 
 **Which files can be reached.** A page can link to any `.md` file in a folder you opened with `md`, or below it, and to nothing outside. Open the top-level file or the folder itself, not a chapter in a subfolder. After the server restarts, folders other than the one it was started with show "Not available" until you run `md` on them again.
 
@@ -118,7 +118,7 @@ Pages follow the system's light or dark setting. The ☀️/🌙 button switches
 The ✏️ button turns editing on for the tab and shows a bar of buttons. Every change is written to the `.md` file itself; the page then reloads and flashes what changed.
 
 * **Correct an equation**: click it. Its TeX opens with a preview that follows your typing and shows KaTeX's complaint if it cannot be typeset. **Save** or Ctrl+Enter writes it.
-* **Fix text**: select the words that are wrong, press the button and type them as they should be. The fix is written as `<span class="fix" data-was="…">`, which reads as normal text. While editing, fixes are underlined with dots; click one to change or undo it.
+* **Fix text**: select the words that are wrong, press the button and type them as they should be. The fix is written as `<span class="fix" data-was="…">`, which reads as normal text. While editing, fixes are underlined with dots; click one to change or undo it. Words in a table can be fixed the same way, also in the title and the note that pdf2md sets across the top and the foot of a table.
 * **Note**: select words and press the button to add a collapsible note after their paragraph. Tick the box to also put a ✎ marker after the selected words; clicking the marker opens the note.
 * **Warning**: the same, as a box that is always visible, for example where you think the book is wrong.
 * **Equations to check** opens `check-equations.md` if the folder has one.
