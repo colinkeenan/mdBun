@@ -796,6 +796,10 @@ const EDIT_HEAD = String.raw`
         });
         let text = "", start = -1, end = -1;
         for (let n; (n = walker.nextNode()); ) {
+          // Words never run from one piece of text into the next: between two pieces stands
+          // a tag or a formula, which the server blanks out when it looks for the words in
+          // the file. ("Kohn" in a link and "–Sham" behind it are not one more "Kohn–Sham".)
+          if (text) text += "\0";
           if (start < 0) {
             if (n === range.startContainer) start = text.length + range.startOffset;
             else if (range.comparePoint(n, 0) >= 0) start = text.length;
