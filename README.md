@@ -28,59 +28,43 @@ In pdf2md's window, enter `md` as the Reader and "Open Book" starts mdBun on the
 
 ## Install
 
-Clone this repository and install [Bun](https://bun.sh). The `md` script also needs `curl`, and on Linux `fuser` (package `psmisc`).
+Install [Bun](https://bun.sh) and `curl`, and clone this repository. The commands below are run in the cloned folder.
+
+`bun run build` makes the `md` command for your computer and puts it in the `build/` folder: it writes in where you cloned mdBun and where Bun is, so there is nothing to edit. `install` then copies it to where your system finds it. Run both again if you move the cloned folder.
 
 ### Linux
 
-1. In `md`, set the path in the `cd` line to where you cloned mdBun. Then `chmod +x md` and copy it to `/usr/local/bin`.
-2. In `mdBun.desktop`, set `Icon=` to an icon of your choice, or remove the line. Copy the file to `~/.local/share/applications`.
-3. In your file manager, make mdBun the default application for `.md` files.
+mdBun also needs `fuser` (package `psmisc`).
+
+```sh
+bun run build
+install -Dm755 build/md ~/.local/bin/md
+install -Dm644 build/mdBun.desktop ~/.local/share/applications/mdBun.desktop
+```
+
+The second line installs the `md` command. The third adds mdBun to your desktop, so a file manager can open `.md` files with it; to finish, make mdBun the default application for `.md` files in your file manager.
+
+`md` works in a terminal only if `~/.local/bin` is on your PATH. Not every distribution puts it there: check with `echo $PATH`. If it is missing, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.profile` (zsh: `~/.zprofile`), or to `~/.bashrc` or `~/.zshrc`; in fish, run `fish_add_path ~/.local/bin`. Opening files from the file manager works without it.
 
 The desktop file also offers mdBun under **Open With** for folders. To keep your file manager as the default for folders, run `xdg-mime default org.kde.dolphin.desktop inode/directory` (with your file manager's desktop file) and then `update-desktop-database ~/.local/share/applications`.
+
+mdBun appears with your icon theme's Markdown icon. For another, change the `Icon=` line of the installed desktop file.
 
 ### Termux on Android
 
 1. Allow Termux to display over other apps and to run in the background without battery limits.
-2. Use this `md` in place of the one in the repository. It is the same script with four lines changed for Termux: the folder mdBun is in, the launcher (`grun` and the full path to `bun`), how an old server is stopped (`pkill`), and how the browser is opened (`termux-open-url`). You may need to install packages to get `grun` and `curl`.
+2. Build `md`. Bun runs through `grun` in Termux, so start the build script with bash. It makes the Termux form of `md`, which expects Bun at `~/.bun/bin/bun`. You may need to install packages to get `grun` and `curl`.
 
    ```bash
-   #!/bin/bash
-   # Show a Markdown file in the browser, or a folder as a list of links to its Markdown files.
-   # One server shows any number of files, each in its own tab: if it's already running, the file
-   # is added to it; otherwise it's started. With no argument, the current folder is shown.
-   file="$(realpath "${1:-.}")" || exit 1
-
-   # Ask the server to add the file or folder; it prints its URL.
-   open_file() {
-       curl -sf --data-urlencode "path=$file" http://localhost:3000/__open
-   }
-
-   if ! url=$(open_file); then
-       # Nothing is running, or an old server without /__open is: replace it.
-       pkill -f server.ts
-
-       cd "$HOME/mdBun" || exit 1
-
-       setsid grun "$HOME/.bun/bin/bun" run server.ts "$file" >"$HOME/mdbun.log" 2>&1 &
-
-       # Wait up to 10 seconds for it to start.
-       for _ in {1..100}; do
-           url=$(open_file) && break
-           sleep 0.1
-       done
-       cat "$HOME/mdbun.log"
-       [ -n "$url" ] || exit 1
-   fi
-
-   termux-open-url "$url"
+   bash build.sh
    ```
 
 3. Install it, and make it what Termux runs when another app sends it a file:
 
    ```bash
-   chmod +x md
-   mv md /data/data/com.termux/files/usr/bin/md
-   ln -s /data/data/com.termux/files/usr/bin/md ~/bin/termux-file-editor
+   install -Dm755 build/md $PREFIX/bin/md
+   mkdir -p ~/bin
+   ln -s $PREFIX/bin/md ~/bin/termux-file-editor
    ```
 
 4. In a file manager such as Fluffy, tap a `.md` file, open it with Termux and choose "Edit". The file appears in your default browser.

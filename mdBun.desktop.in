@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=mdBun
+Comment=Display .md file as HTML in default browser, or a folder as a list of its .md files
+Exec=@MD@ %f
+Icon=text-markdown
+MimeType=text/markdown;inode/directory;
+Terminal=false
+StartupNotify=true

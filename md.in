@@ -11,11 +11,11 @@ open_file() {
 
 if ! url=$(open_file); then
     # Nothing is running, or an old server without /__open is: replace it.
-    fuser -k 3000/tcp 2>/dev/null
+    @STOP@
 
-    cd "$HOME/github/mdBun" || exit 1
+    cd @DIR@ || exit 1
 
-    setsid bun run server.ts "$file" >"$HOME/mdbun.log" 2>&1 &
+    setsid @BUN@ run server.ts "$file" >"$HOME/mdbun.log" 2>&1 &
 
     # Wait up to 10 seconds for it to start.
     for _ in {1..100}; do
@@ -26,4 +26,4 @@ if ! url=$(open_file); then
     [ -n "$url" ] || exit 1
 fi
 
-xdg-open "$url"
+@OPEN@ "$url"
