@@ -121,6 +121,7 @@ The ✏️ button turns editing on for the tab and shows a bar of buttons. Every
 * **Fix text**: select the words that are wrong, press the button and type them as they should be. The fix is written as `<span class="fix" data-was="…">`, which reads as normal text. While editing, fixes are underlined with dots; click one to change or undo it. Words in a table can be fixed the same way, also in the title and the note that pdf2md sets across the top and the foot of a table.
 * **Note**: select words and press the button to add a collapsible note after their paragraph. Tick the box to also put a ✎ marker after the selected words; clicking the marker opens the note.
 * **Warning**: the same, as a box that is always visible, for example where you think the book is wrong.
+* **🔬 See the Markdown**: select anything (words, bold text, a link, a list, a table, a formula) and press the button to see how it is written in the file. The selection is highlighted within the whole of its paragraphs. Nothing is changed. This one is not held to plain words: the selection may run over formatting and formulas.
 * **Equations to check** opens `check-equations.md` if the folder has one.
 
 Notes and warnings are Markdown and can hold math. To change or remove one, click it while editing. **Delete** has to be pressed twice, since what you wrote is gone for good.

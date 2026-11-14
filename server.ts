@@ -144,6 +144,9 @@ const CSS = `
   .edit-preview { overflow-x: auto; min-height: 2rem; padding: 0.3rem 0; }
   .edit-error { margin: 0.4rem 0; overflow-wrap: anywhere; }
   .edit-error:empty { display: none; }
+  .edit-source { max-height: 60vh; overflow: auto; margin: 0; white-space: pre-wrap;
+                 overflow-wrap: anywhere; font-size: 0.85rem; }
+  .edit-source mark { background: #ffd33d88; color: inherit; }
   .edit-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.8rem; }
   .edit-gap { flex: 1; }
   /* Your own notes (<details class="mine">) stand out from the book's text. */
@@ -766,7 +769,8 @@ const browseDialog = (dir: string) => `<button class="browse-toggle" type="butto
 //  - "Fix text" marks the selected words as a fix: <span class="fix" data-was="…">…</span>;
 //  - "Note" and "Warning" add <details class="mine"> or > [!WARNING] after the paragraph of
 //    the selected words (or after an equation, from its dialog), with an optional ✎ marker;
-//  - clicking one of those notes, or any alert box, opens its Markdown to change or delete it.
+//  - clicking one of those notes, or any alert box, opens its Markdown to change or delete it;
+//  - 🔬 shows the Markdown of whatever is selected (words, formatting, formulas), unchanged.
 // These are the marks pdf2md keeps when it converts a book again. The page only says what to
 // change and where; the server (saveEdit below) finds the place in the file and writes it,
 // and live reload then shows the result.
@@ -789,8 +793,8 @@ const EDIT_HEAD = String.raw`
       const texOf = new WeakMap(); // each formula's TeX, before KaTeX replaces it
 
       // The selection: { text, nth, count }, see above.
-      function place(range) {
-        if (!range) throw new Error("Select some words first.");
+      // The page's text as the file has it, and where the range starts and ends in it.
+      function pageText(range) {
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
           acceptNode: (n) => n.parentElement && !n.parentElement.closest(SKIP) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
         });
@@ -808,6 +812,12 @@ const EDIT_HEAD = String.raw`
           else if (range.comparePoint(n, n.data.length) <= 0) end = text.length + n.data.length;
           text += n.data;
         }
+        return { text, start, end };
+      }
+
+      function place(range) {
+        if (!range) throw new Error("Select some words first.");
+        const { text, start, end } = pageText(range);
         const raw = start < 0 || end <= start ? "" : text.slice(start, end);
         const words = raw.trim();
         if (!words) throw new Error("Select some words first (not only a formula).");
@@ -817,6 +827,30 @@ const EDIT_HEAD = String.raw`
         for (const m of text.matchAll(re)) { if (m.index === at) nth = count; count++; }
         if (nth < 0) throw new Error(NOT_FOUND);
         return { text: words, nth, count };
+      }
+
+      // The selection for 🔬, which may run over formatting and formulas: its first and its
+      // last few words (letters and digits only, whatever stands between them), each the nth
+      // of count as above, and its first and last formula.
+      function span(range) {
+        if (!range) throw new Error("Select something first.");
+        const { text, start, end } = pageText(range);
+        const words = start < 0 || end <= start ? [] :
+          [...text.slice(start, end).matchAll(/[\p{L}\p{N}]+/gu)].map((m) => ({ w: m[0], at: start + m.index }));
+        const group = (some) => {
+          const re = new RegExp(some.map((x) => x.w).join("[^\\p{L}\\p{N}]*"), "gu");
+          let nth = -1, count = 0;
+          for (const m of text.matchAll(re)) { if (m.index === some[0].at) nth = count; count++; }
+          if (nth < 0) throw new Error("This selection can't be told apart on the page. Select a little more or less.");
+          return { words: some.map((x) => x.w), nth, count };
+        };
+        const where = {};
+        if (words.length) { where.head = group(words.slice(0, 8)); where.tail = group(words.slice(-8)); }
+        const math = [...document.querySelectorAll(".math[data-i]")].filter((el) => range.intersectsNode(el) && texOf.has(el));
+        const formula = (el) => ({ i: Number(el.dataset.i), was: texOf.get(el) });
+        if (math.length) { where.first = formula(math[0]); where.last = formula(math[math.length - 1]); }
+        if (!where.head && !where.first) throw new Error("Select something first.");
+        return where;
       }
 
       document.addEventListener("DOMContentLoaded", () => {
@@ -1014,11 +1048,28 @@ const EDIT_HEAD = String.raw`
           });
         }
 
+        // 🔬: the Markdown of the selection, in the whole of its paragraphs, to read (or copy).
+        async function openSource() {
+          let got;
+          try { got = await send({ op: "source", where: span(picked()) }); }
+          catch (err) { say(err.message, true); return; }
+          say(HINT);
+          dialog.innerHTML =
+            '<form method="dialog"><h2>The Markdown of the selection</h2><pre class="edit-source"></pre>' +
+            '<div class="edit-actions"><span class="edit-gap"></span><button>Close</button></div></form>';
+          const mark = document.createElement("mark");
+          mark.textContent = got.picked;
+          dialog.querySelector("pre").append(got.before, mark, got.after);
+          dialog.showModal();
+          mark.scrollIntoView({ block: "center" });
+        }
+
         // Keep the selection when a button of the bar is pressed.
         bar.addEventListener("mousedown", (e) => { if (e.target.closest("button")) e.preventDefault(); });
         bar.addEventListener("click", (e) => {
           const button = e.target.closest("button[data-do]");
           if (!button) return;
+          if (button.dataset.do === "source") { openSource(); return; }
           let where;
           try { where = place(picked()); } catch (err) { say(err.message, true); return; }
           say(HINT);
@@ -1057,6 +1108,7 @@ const editTools = (checklist: boolean) => `<button class="edit-toggle" type="but
   <button type="button" data-do="fix" title="Correct the selected words where the conversion got them wrong">Fix text</button>
   <button type="button" data-do="note" title="Add a collapsible note of your own after the paragraph of the selected words">Note</button>
   <button type="button" data-do="warning" title="Add a warning box after the paragraph of the selected words">Warning</button>
+  <button type="button" data-do="source" aria-label="See the Markdown of the selection" title="See the Markdown of the selection: how what you selected is written in the file">🔬</button>
   ${checklist ? '<a href="check-equations.md" title="The equations most worth comparing with the book">Equations to check</a>' : ""}
   <span class="edit-msg" aria-live="polite"></span>
 </div>
@@ -1935,6 +1987,67 @@ function editOldNote(src: string, edit: any): string {
   return out;
 }
 
+// 🔬: the Markdown of the page's selection. Nothing is changed, so the selection may run over
+// formatting and formulas: its first and its last few words are looked for with anything but
+// letters and digits allowed between them (and what the file has there but the page doesn't:
+// the number of a list item, the language of a code block, &amp; and the like, an emoji's
+// :name:).
+const WORD_GAP = String.raw`(?:[^\p{L}\p{N}]|(?<=^[ \t>]*)\d+[.)](?=[ \t])|(?<=^[ \t]*(?:\x60{3,}|~{3,}))[\w+-]+|&#?\w+;|:[a-z0-9_+-]+:)*`;
+
+function findWords(text: string, group: any): Span {
+  const words: string[] = Array.isArray(group?.words) ? group.words.slice(0, 20) : [];
+  if (!words.length || !words.every((w) => typeof w === "string" && /^[\p{L}\p{N}]+$/u.test(w))) {
+    throw new EditError("Select something first.");
+  }
+  const found = [...text.matchAll(new RegExp(words.join(WORD_GAP), "gmu"))];
+  const m = found.length === group.count ? found[group.nth] : undefined;
+  if (!m) {
+    throw new EditError(
+      "This selection can't be found for sure in the file. Select a little more or less, or start and end it on plain words.",
+    );
+  }
+  return { start: m.index, end: m.index + m[0].length };
+}
+
+/** The selection as written in the file, and the rest of its paragraphs before and after it. */
+function peekSource(src: string, edit: any) {
+  const where = edit.where ?? {};
+  const spans: Span[] = [];
+  if (where.head) {
+    // footnote marks and the [!WARNING] of a box aren't in the page's text either
+    const text = shownText(src).replace(
+      /\[\^[^\]\s]+\]|\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/gi,
+      (m) => "\0".repeat(m.length),
+    );
+    spans.push(findWords(text, where.head), findWords(text, where.tail ?? where.head));
+  }
+  for (const math of [where.first, where.last]) if (math) spans.push(locate(src, { math }));
+  if (!spans.length) throw new EditError("Select something first.");
+  let start = Math.min(...spans.map((s) => s.start));
+  let end = Math.max(...spans.map((s) => s.end));
+  // The marks right around it are part of how it is written: ** _ ~~, the brackets and the
+  // address of a link, and what starts its line (# - 1. > |).
+  start -= src.slice(Math.max(0, start - 100), start).match(/[*_~[]*$/)![0].length;
+  const line = src.lastIndexOf("\n", start - 1) + 1;
+  if (/^[ \t]*(?:(?:[-+*>|]|\d+[.)]|#{1,6})[ \t]+)+$/.test(src.slice(line, start))) start = line;
+  end += src.slice(end, end + 2000).match(/^[*_~]*(?:\]\([^)\n]*\))?[*_~]*(?:[ \t]*\|[ \t]*(?=\r?\n|$))?/)![0].length;
+  // The paragraphs it is in: from the empty line before it to the one after, taking the
+  // whole of a code block or an equation that has empty lines of its own.
+  let from = start;
+  let to = end;
+  for (const s of [...codeSpans(src).filter((c) => c.fenced), ...mathSpans(src)]) {
+    if (s.start < to && s.end > from) {
+      from = Math.min(from, s.start);
+      to = Math.max(to, s.end);
+    }
+  }
+  from = src.slice(0, from).match(/^[\s\S]*\n[ \t]*\r?\n/)?.[0].length ?? 0;
+  const gap = /\r?\n[ \t]*\r?\n/g;
+  gap.lastIndex = to;
+  to = Math.max(to, gap.exec(src)?.index ?? src.trimEnd().length);
+  return { before: src.slice(from, start), picked: src.slice(start, end), after: src.slice(end, to) };
+}
+
 // One change at a time, so two can't read the same file and overwrite each other.
 let editQueue: Promise<unknown> = Promise.resolve();
 
@@ -2024,8 +2137,9 @@ const server = Bun.serve({
         return Response.json({ error: "This file can't be edited." }, { status: 404 });
       }
       try {
-        // Not a change: the Markdown of a note, for the page to show in its dialog.
+        // Not a change: the Markdown of a note or of the selection, for the page to show.
         if (edit.op === "peek") return Response.json(peekNote(await Bun.file(file).text(), edit));
+        if (edit.op === "source") return Response.json(peekSource(await Bun.file(file).text(), edit));
         await saveEdit(file, edit);
         return Response.json({ ok: true });
       } catch (err) {
