@@ -1093,10 +1093,12 @@ const EDIT_HEAD = String.raw`
             if (note && !e.target.closest("a, summary")) { e.preventDefault(); openOld(note); }
             return;
           }
-          const range = document.createRange();
-          range.selectNodeContents(fix);
-          try { const where = place(range); openFix(where, where.text, fix.dataset.was); }
-          catch (err) { say("This fix can only be changed in the file.", true); }
+          // Which fix of the file it is, and its words as the file has them (a formula in
+          // it is not in the page's text, so the words alone would not find it).
+          const where = { fix: [...document.querySelectorAll("span.fix[data-was]")].indexOf(fix), was: fix.dataset.was };
+          send({ op: "fixsource", where })
+            .then((d) => openFix(where, d.now, fix.dataset.was))
+            .catch(() => say("This fix can only be changed in the file.", true));
         });
       });
     })();
@@ -1208,13 +1210,17 @@ ${opts.browse ? browseDialog(opts.browse) : ""}${opts.edit ? editTools(opts.edit
 /**
  * Markdown mangles LaTeX (it eats backslashes in `\{` / `\,` / `\\` and turns `*` and `_`
  * into emphasis), so lift math out first, render the Markdown, then put the untouched
- * source back for KaTeX to typeset. Code blocks/spans are skipped so `$` in code is safe.
+ * source back for KaTeX to typeset. Code blocks/spans are skipped so `$` in code is safe,
+ * and so is the tag that opens a fix (it keeps the converted text, formulas and all).
  *
  * Math is also read in the two forms GitHub leaves untouched (in "$" and "$$" it mangles the
  * LaTeX the same way): a block fenced with ```math, and $`…`$ in a sentence.
  */
 const PROTECT = new RegExp(
   [
+    // the tag a fix opens with: the converted text it keeps may hold a formula, which is
+    // not one of the page's (kept as is; no group, so the numbers below stay)
+    '<span class="fix" data-was="[^"]*">',
     "^(```math[ \\t]*\\n[\\s\\S]*?^```)[ \\t]*$", // 1: display math, fenced
     "(\\$`[^`]+`\\$)", // 2: inline math, in backticks
     "^(`{3,}|~{3,})[^\\n]*\\n[\\s\\S]*?^\\3[ \\t]*$", // 3: fenced code  (kept as is)
@@ -1737,10 +1743,15 @@ function locate(src: string, where: any): Span {
 }
 
 const FIX_SPAN = /<span class="fix" data-was="([^"]*)">([\s\S]*?)<\/span>/g;
+// The marks of a formula are kept by their numbers ("&#36;" for "$", "&#96;" for "`"): a
+// program that reads the Markdown would else take the converted formula inside the tag
+// for one of the page's. pdf2md writes and reads them the same way.
 const toAttr = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/\$/g, "&#36;").replace(/`/g, "&#96;");
 const fromAttr = (s: string) =>
-  s.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  s.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
 function editMath(src: string, edit: any): string {
   const { start, end } = locate(src, { math: edit.where?.math ?? {} });
@@ -1779,11 +1790,29 @@ function editMath(src: string, edit: any): string {
   return out;
 }
 
+/** The fix the page clicked: the one of that number in the file, if it still keeps the same converted text. */
+function fixOf(src: string, where: any): RegExpMatchArray {
+  const m = [...src.matchAll(FIX_SPAN)][where?.fix];
+  if (!m || fromAttr(m[1]) !== where?.was) {
+    throw new EditError("The file has changed since this page was shown. Reload the page and try again.");
+  }
+  return m;
+}
+
 function editFix(src: string, edit: any): string {
   if (edit.where?.math) throw new EditError("Click an equation to correct it.");
-  const { start, end } = locate(src, edit.where);
   const now = String(edit.now ?? "").trim().replace(/\n\s*\n/g, "\n");
   if (/<\/span>/i.test(now)) throw new EditError("A fix can't contain </span>.");
+  // A fix that was clicked: its words are changed, or it is undone if they are the
+  // converted ones again.
+  if (typeof edit.where?.fix === "number") {
+    const m = fixOf(src, edit.where);
+    const original = fromAttr(m[1]);
+    const squash = (s: string) => s.replace(/\s+/g, " ");
+    const next = squash(now) === squash(original) ? original : `<span class="fix" data-was="${m[1]}">${now}</span>`;
+    return src.slice(0, m.index) + next + src.slice(m.index! + m[0].length);
+  }
+  const { start, end } = locate(src, edit.where);
   const was = src.slice(start, end);
   if (/\n[ \t]*\r?\n/.test(was)) throw new EditError("A fix has to stay inside one paragraph.");
   if (codeSpans(src).some((c) => start < c.end && end > c.start)) {
@@ -2140,6 +2169,7 @@ const server = Bun.serve({
         // Not a change: the Markdown of a note or of the selection, for the page to show.
         if (edit.op === "peek") return Response.json(peekNote(await Bun.file(file).text(), edit));
         if (edit.op === "source") return Response.json(peekSource(await Bun.file(file).text(), edit));
+        if (edit.op === "fixsource") return Response.json({ now: fixOf(await Bun.file(file).text(), edit.where)[2] });
         await saveEdit(file, edit);
         return Response.json({ ok: true });
       } catch (err) {
