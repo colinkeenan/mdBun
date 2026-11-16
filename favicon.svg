@@ -10,7 +10,7 @@
     </linearGradient>
   </defs>
   <path d="M128 36C108 8 70 4 46 22 20 42 7 90 7 150v50c0 34 30 49 60 49h122c30 0 60-15 60-49v-50c0-60-13-108-39-128-24-18-62-14-82 14z" fill="url(#crust)" stroke="#45190a" stroke-width="14" stroke-linejoin="round"/>
-  <path d="M128 40v56" fill="none" stroke="#fde9ae" stroke-width="14" stroke-linecap="round"/>
+  <path d="M128 40c2 26 18 44 16 70" fill="none" stroke="#fde9ae" stroke-width="14" stroke-linecap="round"/>
   <!-- the letters twice: a dark edge first, then white over it (QtSvg has no paint-order) -->
   <g transform="translate(-11.5 81.5) scale(1.35)">
     <path d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="none" stroke="#45190a" stroke-width="9" stroke-linejoin="round"/>
