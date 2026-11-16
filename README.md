@@ -49,7 +49,7 @@ The second line installs the `md` command. The third adds mdBun to your desktop,
 
 The desktop file also offers mdBun under **Open With** for folders. To keep your file manager as the default for folders, run `xdg-mime default org.kde.dolphin.desktop inode/directory` (with your file manager's desktop file) and then `update-desktop-database ~/.local/share/applications`.
 
-mdBun's icon is a bun carrying the Markdown mark. For another, such as your icon theme's `text-markdown`, change the `Icon=` line of the installed desktop file.
+mdBun's icon is a bun fresh from the oven, carrying the Markdown mark. For another, such as your icon theme's `text-markdown`, change the `Icon=` line of the installed desktop file.
 
 ### Termux on Android
 
