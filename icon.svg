@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- A bun with the Markdown mark (M and down arrow, CC0 by Dustin Curtis) on its front. -->
+  <defs>
+    <clipPath id="bun">
+      <path id="shape" d="M128 30C66 30 14 92 14 148c0 52 50 80 114 80s114-28 114-80C242 92 190 30 128 30z"/>
+    </clipPath>
+  </defs>
+  <use href="#shape" fill="#fbf0df"/>
+  <g clip-path="url(#bun)">
+    <!-- shade along the bottom, shine at the top left -->
+    <path d="M0 150c30 50 70 62 128 62s98-12 128-62v106H0z" fill="#f3d9bd"/>
+    <path d="M62 84c14-18 32-30 52-35" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/>
+  </g>
+  <use href="#shape" fill="none" stroke="#000" stroke-width="10" stroke-linejoin="round"/>
+  <g transform="translate(53 92) scale(.72)">
+    <rect x="5" y="5" width="198" height="118" rx="14" fill="#fff" stroke="#000" stroke-width="10"/>
+    <path d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z"/>
+  </g>
+</svg>

@@ -40,15 +40,16 @@ mdBun also needs `fuser` (package `psmisc`).
 bun run build
 install -Dm755 build/md ~/.local/bin/md
 install -Dm644 build/mdBun.desktop ~/.local/share/applications/mdBun.desktop
+install -Dm644 icon.svg ~/.local/share/icons/hicolor/scalable/apps/mdBun.svg
 ```
 
-The second line installs the `md` command. The third adds mdBun to your desktop, so a file manager can open `.md` files with it; to finish, make mdBun the default application for `.md` files in your file manager.
+The second line installs the `md` command. The third adds mdBun to your desktop, so a file manager can open `.md` files with it; to finish, make mdBun the default application for `.md` files in your file manager. The fourth installs its icon.
 
 `md` works in a terminal only if `~/.local/bin` is on your PATH. Not every distribution puts it there: check with `echo $PATH`. If it is missing, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.profile` (zsh: `~/.zprofile`), or to `~/.bashrc` or `~/.zshrc`; in fish, run `fish_add_path ~/.local/bin`. Opening files from the file manager works without it.
 
 The desktop file also offers mdBun under **Open With** for folders. To keep your file manager as the default for folders, run `xdg-mime default org.kde.dolphin.desktop inode/directory` (with your file manager's desktop file) and then `update-desktop-database ~/.local/share/applications`.
 
-mdBun appears with your icon theme's Markdown icon. For another, change the `Icon=` line of the installed desktop file.
+mdBun's icon is a bun carrying the Markdown mark. For another, such as your icon theme's `text-markdown`, change the `Icon=` line of the installed desktop file.
 
 ### Termux on Android
 
@@ -87,7 +88,7 @@ mdBun appears with your icon theme's Markdown icon. For another, change the `Ico
 
 2. Long-press the home screen, choose Widgets, drag the Termux:Widget shortcut (the small one, not the list) onto the screen and pick `Documents`.
 
-Tapping the icon shows the folder's listing in your browser. If nothing happens, move the script up to `~/.shortcuts/Documents`: there it runs in a terminal, where you can read the error. For your own icon, put `Documents.png` in `~/.shortcuts/icons` before you add the widget.
+Tapping the icon shows the folder's listing in your browser. If nothing happens, move the script up to `~/.shortcuts/Documents`: there it runs in a terminal, where you can read the error. To give it mdBun's icon, copy `icon.png` from the cloned folder to `~/.shortcuts/icons/Documents.png` before you add the widget.
 
 ## Use
 
