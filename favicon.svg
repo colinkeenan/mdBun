@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <!-- icon.svg redrawn for a browser tab, where it gets about 16 pixels: the M and down arrow
-       of the Markdown mark (CC0 by Dustin Curtis) in white across the whole bun, no fine
+       of the Markdown mark (CC0 by Dustin Curtis) raised across the whole bun, no fine
        detail. Plain paths and a gradient only, as in icon.svg. -->
   <defs>
     <linearGradient id="crust" x1="0" y1="0" x2="0" y2="1">
@@ -8,12 +8,18 @@
       <stop offset=".45" stop-color="#d87a1e"/>
       <stop offset="1" stop-color="#f2b24a"/>
     </linearGradient>
+    <linearGradient id="raised" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fffaf0"/>
+      <stop offset="1" stop-color="#ffe6ad"/>
+    </linearGradient>
   </defs>
   <path d="M118 36C100 6 64 0 42 18 18 38 7 90 7 150v50c0 34 30 49 60 49h122c30 0 60-15 60-49v-50c0-54-10-96-34-118-26-22-74-22-97 4z" fill="url(#crust)" stroke="#45190a" stroke-width="14" stroke-linejoin="round"/>
-  <path d="M118 40c4 26 28 42 26 70" fill="none" stroke="#fde9ae" stroke-width="14" stroke-linecap="round"/>
-  <!-- the letters twice: a dark edge first, then white over it (QtSvg has no paint-order) -->
+  <path d="M118 40c10 14 31 36 29 68" fill="none" stroke="#fde9ae" stroke-width="14" stroke-linecap="round"/>
+  <!-- the letters raised from the crust as on the icon, but flat: a shadow below right, a dark
+       edge, then the cream face over both (QtSvg has no paint-order) -->
   <g transform="translate(-11.5 81.5) scale(1.35)">
-    <path d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="none" stroke="#45190a" stroke-width="9" stroke-linejoin="round"/>
-    <path d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="#fff"/>
+    <path transform="translate(4 5)" d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="#45190a" stroke="#45190a" stroke-width="7" stroke-linejoin="round" opacity=".85"/>
+    <path d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="none" stroke="#45190a" stroke-width="7" stroke-linejoin="round"/>
+    <path d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="url(#raised)"/>
   </g>
 </svg>
