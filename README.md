@@ -70,9 +70,11 @@ mdBun's icon is a bun fresh from the oven, carrying the Markdown mark. For anoth
 
 4. In a file manager such as Fluffy, tap a `.md` file, open it with Termux and choose "Edit". The file appears in your default browser.
 
-**A home screen icon for a folder.** [Termux:Widget](https://github.com/termux/termux-widget) runs a script from `~/.shortcuts` when you tap its icon. Install it from the same place as Termux (F-Droid or GitHub): the two apps must be signed with the same key.
+**A home screen icon for a folder.** One tap on the icon shows the folder's listing in your browser.
 
-1. Make the script. In `tasks` it runs in the background, with no terminal window:
+1. Install [Termux:Widget](https://github.com/termux/termux-widget), which runs a script from `~/.shortcuts` when you tap its icon. Get it from the same place as Termux (F-Droid or GitHub): the two apps must be signed with the same key.
+
+2. Make the script. In `tasks` it runs in the background, with no terminal window:
 
    ```bash
    mkdir -p ~/.shortcuts/tasks
@@ -86,9 +88,17 @@ mdBun's icon is a bun fresh from the oven, carrying the Markdown mark. For anoth
 
    `~` is Termux's own home folder. For the phone's Documents folder, run `termux-setup-storage` once and use `~/storage/shared/Documents` in the script.
 
-2. Long-press the home screen, choose Widgets, drag the Termux:Widget shortcut (the small one, not the list) onto the screen and pick `Documents`.
+3. Give it mdBun's icon: a PNG with the script's name, in `~/.shortcuts/icons`. Run this in the cloned folder, before the next step, because the widget takes its icon when you add it:
 
-Tapping the icon shows the folder's listing in your browser. If nothing happens, move the script up to `~/.shortcuts/Documents`: there it runs in a terminal, where you can read the error. To give it mdBun's icon, copy `icon.png` from the cloned folder to `~/.shortcuts/icons/Documents.png` before you add the widget.
+   ```bash
+   mkdir -p ~/.shortcuts/icons
+   chmod 700 ~/.shortcuts/icons
+   cp icon.png ~/.shortcuts/icons/Documents.png
+   ```
+
+4. Long-press the home screen, choose Widgets, drag the Termux:Widget shortcut (the small one, not the list) onto the screen and pick `Documents`.
+
+If a tap does nothing, move the script up to `~/.shortcuts/Documents`: there it runs in a terminal, where you can read the error.
 
 ## Use
 
