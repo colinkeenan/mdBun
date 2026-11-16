@@ -2129,7 +2129,7 @@ open(FILE, FILE_KIND);
 // mdBun's icon, for the browser tab. Pages name it in their <head>; a tab showing an image or
 // a PDF has no <head>, and there the browser asks for /favicon.ico, which gets the same SVG.
 const ICON_URL = "/__icon.svg";
-const ICON = await Bun.file(join(import.meta.dir, "icon.svg")).bytes();
+const ICON_FILE = join(import.meta.dir, "icon.svg");
 
 const server = Bun.serve({
   port: PORT,
@@ -2202,8 +2202,9 @@ const server = Bun.serve({
     }
     if (LIVE_RELOAD && pathname === "/__reload") return reloadStream();
     if (pathname === ICON_URL || pathname === "/favicon.ico") {
-      return new Response(ICON, {
-        headers: { "content-type": "image/svg+xml", "cache-control": "max-age=3600" },
+      // Read each time and never kept by the browser, so a changed icon shows on a reload.
+      return new Response(Bun.file(ICON_FILE), {
+        headers: { "content-type": "image/svg+xml", "cache-control": "no-cache" },
       });
     }
 
