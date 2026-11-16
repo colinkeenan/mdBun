@@ -14,12 +14,16 @@ out="$here/build"
 if [ -n "${TERMUX_VERSION:-}" ]; then
     # Termux on Android: bun runs through grun, and there is no desktop file.
     bindir="$PREFIX/bin"
+    # There is no /bin/bash on Android. A Termux shell quietly corrects such a first line, but
+    # a Termux:Widget script that runs `md` gets "md: not found", so name bash where it is.
+    bash="$PREFIX/bin/bash"
     stop='pkill -f server.ts'
     bun='grun "$HOME/.bun/bin/bun"'
     open='termux-open-url'
     desktop=
 else
     bindir="$HOME/.local/bin"
+    bash=/bin/bash
     stop='fuser -k 3000/tcp 2>/dev/null'
     # The full path, because a file manager may not have bun's folder on its PATH.
     bun_path="$(command -v bun)" || { echo "build.sh: bun is not on the PATH" >&2; exit 1; }
@@ -31,6 +35,7 @@ fi
 mkdir -p "$out"
 
 md="$(<"$here/md.in")"
+md="#!$bash"$'\n'"${md#*$'\n'}"   # the first line: where bash is
 md="${md//@STOP@/$stop}"
 md="${md//@DIR@/$(printf %q "$here")}"
 md="${md//@BUN@/$bun}"
