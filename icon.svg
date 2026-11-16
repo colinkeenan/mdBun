@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <!-- A bun fresh from the oven, with the Markdown mark (M and down arrow, CC0 by Dustin Curtis)
-       on its front. Plain paths and gradients only: no clip-path or <use>, which some viewers
-       (QtSvg) do not draw. -->
+  <!-- A bun fresh from the oven, with the M and down arrow of the Markdown mark (CC0 by Dustin
+       Curtis) in white on its front. Plain paths and gradients only: no clip-path or <use>,
+       which some viewers (QtSvg) do not draw. -->
   <defs>
     <!-- crust: toasted brown on top, through orange, to pale gold where it sat on the tray -->
     <linearGradient id="crust" x1="0" y1="0" x2="0" y2="1">
@@ -26,8 +26,9 @@
   <path d="M40 104c6-22 20-38 38-46" fill="none" stroke="#ffe9a8" stroke-width="11" stroke-linecap="round" opacity=".85"/>
   <path d="M168 50c16 2 28 10 36 22" fill="none" stroke="#ffe9a8" stroke-width="9" stroke-linecap="round" opacity=".7"/>
   <path d="M128 50C112 32 86 28 66 42 34 64 12 108 12 152c0 52 48 76 116 76s116-24 116-76c0-44-22-88-54-110-20-14-46-10-62 8z" fill="none" stroke="#45190a" stroke-width="9" stroke-linejoin="round"/>
-  <g transform="translate(47 108) scale(.78)">
-    <rect width="208" height="128" rx="16"/>
+  <!-- the letters twice: a black edge first, then white over it (QtSvg has no paint-order) -->
+  <g transform="translate(18.6 91.1) scale(1.047)">
+    <path d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="none" stroke="#000" stroke-width="9" stroke-linejoin="round"/>
     <path d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="#fff"/>
   </g>
 </svg>
