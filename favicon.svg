@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- icon.svg redrawn for a browser tab, where it gets about 16 pixels: the Markdown mark
+       (CC0 by Dustin Curtis) as wide as the icon, the bun's split crown above it, no fine
+       detail. Plain paths and a gradient only, as in icon.svg. -->
+  <defs>
+    <linearGradient id="crust" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b85a17"/>
+      <stop offset=".4" stop-color="#f0a030"/>
+      <stop offset="1" stop-color="#f8cf7a"/>
+    </linearGradient>
+  </defs>
+  <path d="M128 36C108 8 70 4 46 22 20 42 7 90 7 150c0 68 50 99 121 99s121-31 121-99c0-60-13-108-39-128-24-18-62-14-82 14z" fill="url(#crust)" stroke="#45190a" stroke-width="14" stroke-linejoin="round"/>
+  <path d="M128 40v56" fill="none" stroke="#fde9ae" stroke-width="14" stroke-linecap="round"/>
+  <g transform="translate(8 94) scale(1.1538)">
+    <rect width="208" height="128" rx="16"/>
+    <path d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="#fff"/>
+  </g>
+</svg>

@@ -2126,10 +2126,11 @@ function reloadStream(): Response {
 
 open(FILE, FILE_KIND);
 
-// mdBun's icon, for the browser tab. Pages name it in their <head>; a tab showing an image or
+// mdBun's icon as drawn for the browser tab (favicon.svg; icon.svg has too much detail for 16
+// pixels). Pages name it in their <head>; a tab showing an image or
 // a PDF has no <head>, and there the browser asks for /favicon.ico, which gets the same SVG.
 const ICON_URL = "/__icon.svg";
-const ICON_FILE = join(import.meta.dir, "icon.svg");
+const ICON_FILE = join(import.meta.dir, "favicon.svg");
 
 const server = Bun.serve({
   port: PORT,
