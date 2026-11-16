@@ -1194,6 +1194,7 @@ function page(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
+  <link rel="icon" type="image/svg+xml" href="${ICON_URL}">
   <style>${CSS}</style>${THEME_HEAD}${opts.place ? PLACE_HEAD : ""}${opts.live ? liveHead(opts.live, opts.dir) : ""}${opts.browse ? BROWSE_HEAD : ""}${opts.edit ? EDIT_HEAD : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
 </head>
 <body>
@@ -2125,6 +2126,11 @@ function reloadStream(): Response {
 
 open(FILE, FILE_KIND);
 
+// mdBun's icon, for the browser tab. Pages name it in their <head>; a tab showing an image or
+// a PDF has no <head>, and there the browser asks for /favicon.ico, which gets the same SVG.
+const ICON_URL = "/__icon.svg";
+const ICON = await Bun.file(join(import.meta.dir, "icon.svg")).bytes();
+
 const server = Bun.serve({
   port: PORT,
   hostname: "127.0.0.1", // never reachable from other machines
@@ -2195,6 +2201,11 @@ const server = Bun.serve({
       return searchJson(dir, q);
     }
     if (LIVE_RELOAD && pathname === "/__reload") return reloadStream();
+    if (pathname === ICON_URL || pathname === "/favicon.ico") {
+      return new Response(ICON, {
+        headers: { "content-type": "image/svg+xml", "cache-control": "max-age=3600" },
+      });
+    }
 
     // Serve files (Markdown and images etc.) from the opened folders.
     const target = safePath(pathname);
