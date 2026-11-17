@@ -1355,7 +1355,9 @@ const PROTECT = new RegExp(
     // the tag a fix opens with: the converted text it keeps may hold a formula, which is
     // not one of the page's (kept as is; no group, so the numbers below stay)
     '<span class="fix" data-was="[^"]*">',
-    "^(```math[ \\t]*\\n[\\s\\S]*?^```)[ \\t]*$", // 1: display math, fenced
+    // (also set in, as inside a list item: the fence and each line of the TeX
+    // stand under the item's words)
+    "(?<=^[ \\t]*)(```math[ \\t]*\\n[\\s\\S]*?^[ \\t]*```)[ \\t]*$", // 1: display math, fenced
     "(\\$`[^`]+`\\$)", // 2: inline math, in backticks
     "^(`{3,}|~{3,})[^\\n]*\\n[\\s\\S]*?^\\3[ \\t]*$", // 3: fenced code  (kept as is)
     "(`+)(?:(?!\\4)[\\s\\S])+?\\4", // 4: inline code (kept as is)
@@ -1371,7 +1373,8 @@ const mathOf = (groups: (string | undefined)[]) => groups[0] ?? groups[1] ?? gro
 
 /** How a formula is written: is it a displayed one, and how long are the marks around it. */
 function mathMarks(math: string): { display: boolean; open: number; close: number } {
-  if (math.startsWith("```")) return { display: true, open: math.indexOf("\n") + 1, close: 4 };
+  // (the closing fence with the line break before it, and its indent in a list item)
+  if (math.startsWith("```")) return { display: true, open: math.indexOf("\n") + 1, close: math.length - math.lastIndexOf("\n") };
   if (math.startsWith("$`")) return { display: false, open: 2, close: 2 };
   if (math.startsWith("$$")) return { display: true, open: 2, close: 2 };
   return { display: false, open: 1, close: 1 };
