@@ -1168,6 +1168,139 @@ const watchFolderOf = (file: string) => watchFolder(dirname(file));
 // Keep idle connections alive through proxies and browsers.
 if (LIVE_RELOAD) setInterval(() => broadcast(": ping\n\n"), 15_000);
 
+// A page marker in a book links to "book.pdf#page=38". A desktop browser's PDF viewer opens
+// at that page, but the viewers of phone browsers ignore "#page" and show page 1. For those,
+// the links are pointed at /__pdf/..., mdBun's own viewer (PDF_VIEWER below). Firefox is left
+// alone: on Android too it shows a PDF with pdf.js, which goes to the page.
+const PDF_HEAD = `
+  <script>
+    if (navigator.pdfViewerEnabled === false ||
+        (/Android/.test(navigator.userAgent) && !/Firefox/.test(navigator.userAgent))) {
+      addEventListener("DOMContentLoaded", () => {
+        for (const a of document.querySelectorAll("a[href*='.pdf#page=']")) {
+          const u = new URL(a.href);
+          if (u.origin === location.origin && /\\.pdf$/i.test(u.pathname) && /^#page=\\d+$/.test(u.hash)) {
+            a.href = "/__pdf" + u.pathname + u.hash;
+          }
+        }
+      });
+    }
+  </script>`;
+
+// The PDF at /__pdf/<its path>#page=N, drawn by pdf.js (from a CDN, like KaTeX). Every page
+// has its place in one long column from the start, so "#page=N" can be scrolled to at once;
+// only the pages near the window are drawn, and they are dropped again when they are far
+// away, since a textbook has hundreds and a phone little memory.
+const PDFJS = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build";
+const PDF_VIEWER = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDF</title>
+  <link rel="icon" type="image/svg+xml" href="/__icon.svg">
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; background: light-dark(#d4d4d4, #222); font: 16px system-ui, sans-serif; }
+    .page { width: 100%; max-width: 60rem; margin: 0 auto 8px; background: #fff; }
+    .page canvas { display: block; width: 100%; height: 100%; }
+    #where {
+      position: fixed; right: 8px; bottom: 8px; padding: 2px 8px; border-radius: 6px;
+      background: rgb(0 0 0 / 0.6); color: #fff; font-size: 0.85rem;
+    }
+    #note { padding: 1rem; }
+  </style>
+</head>
+<body>
+  <main></main>
+  <div id="where" hidden></div>
+  <p id="note">Loading…</p>
+  <script type="module">
+    const src = location.pathname.slice("/__pdf".length);
+    const main = document.querySelector("main");
+    const where = document.getElementById("where");
+    const note = document.getElementById("note");
+    try { document.title = decodeURIComponent(src.split("/").pop()); } catch {}
+    try {
+      const pdfjs = await import("${PDFJS}/pdf.min.mjs");
+      pdfjs.GlobalWorkerOptions.workerSrc = "${PDFJS}/pdf.worker.min.mjs";
+      const doc = await pdfjs.getDocument({ url: src }).promise;
+      const size = (await doc.getPage(1)).getViewport({ scale: 1 });
+
+      const slots = [];
+      for (let n = 1; n <= doc.numPages; n++) {
+        const slot = document.createElement("div");
+        slot.className = "page";
+        slot.dataset.n = n;
+        slot.style.aspectRatio = size.width + " / " + size.height; // corrected when drawn
+        main.append(slot);
+        slots.push(slot);
+      }
+      note.remove();
+
+      const tasks = new Map(); // slot -> its drawing in progress
+      async function draw(slot) {
+        if (slot.firstChild || tasks.has(slot)) return;
+        tasks.set(slot, null);
+        const page = await doc.getPage(Number(slot.dataset.n));
+        if (!tasks.has(slot)) return; // scrolled away meanwhile
+        const base = page.getViewport({ scale: 1 });
+        slot.style.aspectRatio = base.width + " / " + base.height;
+        // Finer than the screen, so pinching in stays sharp for a while; within 6 megapixels.
+        let scale = (slot.clientWidth * devicePixelRatio * 1.5) / base.width;
+        scale = Math.min(scale, Math.sqrt(6e6 / (base.width * base.height)));
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const task = page.render({ canvasContext: canvas.getContext("2d"), viewport });
+        tasks.set(slot, task);
+        try {
+          await task.promise;
+          slot.replaceChildren(canvas);
+        } catch {} // cancelled
+        if (tasks.get(slot) === task) tasks.delete(slot);
+      }
+      function drop(slot) {
+        tasks.get(slot)?.cancel();
+        tasks.delete(slot);
+        const canvas = slot.firstChild;
+        if (canvas) { canvas.width = canvas.height = 0; canvas.remove(); } // frees its memory now
+      }
+      const near = new IntersectionObserver(
+        (entries) => { for (const e of entries) (e.isIntersecting ? draw : drop)(e.target); },
+        { rootMargin: "150% 0px" },
+      );
+      for (const slot of slots) near.observe(slot);
+
+      const wanted = () => Number(/^#page=(\\d+)$/.exec(location.hash)?.[1] ?? 1);
+      const go = () => slots[Math.min(Math.max(wanted(), 1), slots.length) - 1].scrollIntoView();
+      // The page in the middle of the window is shown in the corner and kept in the address,
+      // so a reload comes back to it.
+      function show() {
+        const slot = document.elementFromPoint(innerWidth / 2, innerHeight / 2)?.closest(".page");
+        if (!slot) return;
+        where.textContent = slot.dataset.n + " / " + slots.length;
+        where.hidden = false;
+        if (wanted() !== Number(slot.dataset.n)) history.replaceState(null, "", "#page=" + slot.dataset.n);
+      }
+      go();
+      show();
+      addEventListener("hashchange", go);
+      addEventListener("scroll", show, { passive: true });
+    } catch (err) {
+      console.error(err);
+      note.textContent = "This PDF could not be shown here (the viewer is loaded from the internet). ";
+      const a = document.createElement("a");
+      a.href = src;
+      a.textContent = "Open the PDF itself";
+      note.append(a);
+      document.body.append(note);
+    }
+  </script>
+</body>
+</html>`;
+
 const escapeHtml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -1195,7 +1328,7 @@ function page(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
   <link rel="icon" type="image/svg+xml" href="${ICON_URL}">
-  <style>${CSS}</style>${THEME_HEAD}${opts.place ? PLACE_HEAD : ""}${opts.live ? liveHead(opts.live, opts.dir) : ""}${opts.browse ? BROWSE_HEAD : ""}${opts.edit ? EDIT_HEAD : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
+  <style>${CSS}</style>${THEME_HEAD}${PDF_HEAD}${opts.place ? PLACE_HEAD : ""}${opts.live ? liveHead(opts.live, opts.dir) : ""}${opts.browse ? BROWSE_HEAD : ""}${opts.edit ? EDIT_HEAD : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
 </head>
 <body>
 ${body}
@@ -2212,6 +2345,11 @@ const server = Bun.serve({
       return searchJson(dir, q);
     }
     if (LIVE_RELOAD && pathname === "/__reload") return reloadStream();
+    // The viewer is the same for every PDF: it fetches the one its address names, which is
+    // served, or refused, like any other file.
+    if (pathname.startsWith("/__pdf/")) {
+      return new Response(PDF_VIEWER, { headers: { "content-type": "text/html; charset=utf-8" } });
+    }
     if (pathname === ICON_URL || pathname === "/favicon.ico") {
       // Read each time and never kept by the browser, so a changed icon shows on a reload.
       return new Response(Bun.file(ICON_FILE), {
