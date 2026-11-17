@@ -17,7 +17,8 @@ if [ -n "${TERMUX_VERSION:-}" ]; then
     # There is no /bin/bash on Android. A Termux shell quietly corrects such a first line, but
     # a Termux:Widget script that runs `md` gets "md: not found", so name bash where it is.
     bash="$PREFIX/bin/bash"
-    stop='pkill -f server.ts'
+    # KILL, because a server that Android has frozen never gets to act on a gentler signal.
+    stop='pkill -KILL -f server.ts'
     bun='grun "$HOME/.bun/bin/bun"'
     open='termux-open-url'
     desktop=

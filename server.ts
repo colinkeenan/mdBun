@@ -2156,6 +2156,16 @@ const server = Bun.serve({
       return new Response(`http://localhost:${server.port}${where}\n`);
     }
 
+    // `md --stop` ends the server, under the same rule: never at a web page's request.
+    if (pathname === "/__stop") {
+      if (req.method !== "POST" || req.headers.has("origin")) {
+        return new Response("Forbidden", { status: 403 });
+      }
+      console.log("Stopped");
+      setTimeout(() => process.exit(0), 50); // once the answer has gone out
+      return new Response("Stopped\n");
+    }
+
     // A page's ✏️ tools change its Markdown file. Only our own pages may ask: a browser says
     // in the Origin header which site a POST comes from, and another site can't send JSON here
     // without asking first (which gets no permission).

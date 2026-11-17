@@ -80,11 +80,13 @@ mdBun's icon is a bun fresh from the oven, carrying the Markdown mark. For anoth
    mkdir -p ~/.shortcuts/tasks
    cat > ~/.shortcuts/tasks/Documents <<'EOF'
    #!/data/data/com.termux/files/usr/bin/sh
-   exec "$PREFIX/bin/md" ~/Documents
+   exec "$PREFIX/bin/md" --stay ~/Documents
    EOF
    chmod 700 ~/.shortcuts ~/.shortcuts/tasks
    chmod +x ~/.shortcuts/tasks/Documents
    ```
+
+   `--stay` keeps the task going for as long as the server it started runs. Without it the task ends at once, Termux has nothing left to do, and Android freezes the server a few pages later. While it runs, Termux's notification shows one task.
 
    `~` is Termux's own home folder. For the phone's Documents folder, run `termux-setup-storage` once and use `~/storage/shared/Documents` in the script.
 
@@ -106,11 +108,12 @@ If a tap does nothing, move the script up to `~/.shortcuts/Documents`: there it 
 md notes.md     # show a file
 md book/        # list a folder's Markdown files
 md              # the same, for the current folder
+md --stop       # stop the server
 ```
 
 On Linux you can also click a `.md` file in the file manager, or right-click a folder and choose **Open With → mdBun**.
 
-The first `md` starts the server. Later ones add their file to the running server and open a new tab, so open tabs keep working. The server runs until you stop it, for example with `fuser -k 3000/tcp`. Stop it after you update mdBun (`git pull`), too: it loads its code when it starts, so a running server keeps the old version until the next `md` starts a new one. It listens only on `127.0.0.1`, so other machines cannot reach it.
+The first `md` starts the server. Later ones add their file to the running server and open a new tab, so open tabs keep working. The server runs until you stop it with `md --stop`. Stop it after you update mdBun (`git pull`), too: it loads its code when it starts, so a running server keeps the old version until the next `md` starts a new one. It listens only on `127.0.0.1`, so other machines cannot reach it.
 
 **Which files can be reached.** A page can link to any `.md` file in a folder you opened with `md`, or below it, and to nothing outside. Open the top-level file or the folder itself, not a chapter in a subfolder. After the server restarts, folders other than the one it was started with show "Not available" until you run `md` on them again.
 

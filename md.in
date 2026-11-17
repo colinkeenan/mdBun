@@ -2,20 +2,38 @@
 # Show a Markdown file in the browser, or a folder as a list of links to its Markdown files.
 # One server shows any number of files, each in its own tab: if it's already running, the file
 # is added to it; otherwise it's started. With no argument, the current folder is shown.
+#
+#   md --stop         stops the server.
+#   md --stay FILE    doesn't return while the server it started is running. For where the
+#                     server only lives as long as what started it, as in a Termux:Widget task.
+if [ "$1" = --stop ]; then
+    # Ask it to stop. One that doesn't answer (too old, or frozen by Android) is killed.
+    curl -sf -m 2 -X POST http://localhost:3000/__stop || { @STOP@; }
+    exit 0
+fi
+stay=
+if [ "$1" = --stay ]; then
+    stay=yes
+    shift
+fi
 file="$(realpath "${1:-.}")" || exit 1
 
-# Ask the server to add the file or folder; it prints its URL.
+# Ask the server to add the file or folder; it prints its URL. The time limit is for a server
+# that accepts the connection and never answers, which is how one frozen by Android behaves.
 open_file() {
-    curl -sf --data-urlencode "path=$file" http://localhost:3000/__open
+    curl -sf -m 5 --data-urlencode "path=$file" http://localhost:3000/__open
 }
 
+server=
+
 if ! url=$(open_file); then
-    # Nothing is running, or an old server without /__open is: replace it.
+    # Nothing is running, or a server that doesn't answer is: replace it.
     @STOP@
 
     cd @DIR@ || exit 1
 
     setsid @BUN@ run server.ts "$file" >"$HOME/mdbun.log" 2>&1 &
+    server=$!
 
     # Wait up to 10 seconds for it to start.
     for _ in {1..100}; do
@@ -27,3 +45,8 @@ if ! url=$(open_file); then
 fi
 
 @OPEN@ "$url"
+
+if [ -n "$stay" ] && [ -n "$server" ]; then
+    trap 'kill "$server" 2>/dev/null' TERM INT HUP
+    wait "$server"
+fi
