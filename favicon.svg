@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <!-- icon.svg redrawn for a browser tab, where it gets about 16 pixels: the M and down arrow
-       of the Markdown mark (CC0 by Dustin Curtis) raised across the whole bun, no fine
-       detail. Plain paths and a gradient only, as in icon.svg. -->
+       of the Markdown mark (CC0 by Dustin Curtis) raised across the bun's lower half, and a
+       face above them in place of the icon's toasting and glaze, which do not show that small. Plain paths and a gradient only, as in icon.svg. -->
   <defs>
     <linearGradient id="crust" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#a94e14"/>
-      <stop offset=".45" stop-color="#d87a1e"/>
+      <stop offset="0" stop-color="#c4661c"/>
+      <stop offset=".45" stop-color="#de8424"/>
       <stop offset="1" stop-color="#f2b24a"/>
     </linearGradient>
     <linearGradient id="raised" x1="0" y1="0" x2="0" y2="1">
@@ -15,9 +15,14 @@
   </defs>
   <path d="M118 36C100 6 64 0 42 18 18 38 7 90 7 150v50c0 34 30 49 60 49h122c30 0 60-15 60-49v-50c0-54-10-96-34-118-26-22-74-22-97 4z" fill="url(#crust)" stroke="#45190a" stroke-width="14" stroke-linejoin="round"/>
   <path d="M118 40c10 14 31 36 29 68" fill="none" stroke="#fde9ae" stroke-width="14" stroke-linecap="round"/>
+  <!-- the face: the split is the nose, with an eye and an eyebrow either side of it, drawn
+       crisply (white, dark rim, dark pupil) so they survive at 16 pixels -->
+  <ellipse cx="80" cy="86" rx="24" ry="27" fill="#fff" stroke="#45190a" stroke-width="8"/><ellipse cx="190" cy="86" rx="24" ry="27" fill="#fff" stroke="#45190a" stroke-width="8"/>
+  <circle cx="88" cy="92" r="13" fill="#45190a"/><circle cx="182" cy="92" r="13" fill="#45190a"/>
+  <path d="M52 42q26-16 52-2" fill="none" stroke="#45190a" stroke-width="13" stroke-linecap="round"/><path d="M162 40q26-14 52 2" fill="none" stroke="#45190a" stroke-width="13" stroke-linecap="round"/>
   <!-- the letters raised from the crust as on the icon, but flat: a shadow below right, a dark
        edge, then the cream face over both (QtSvg has no paint-order) -->
-  <g transform="translate(-11.5 81.5) scale(1.35)">
+  <g transform="translate(-1.5 93) scale(1.25)">
     <path transform="translate(4 5)" d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="#45190a" stroke="#45190a" stroke-width="7" stroke-linejoin="round" opacity=".85"/>
     <path d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="none" stroke="#45190a" stroke-width="7" stroke-linejoin="round"/>
     <path d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z" fill="url(#raised)"/>
