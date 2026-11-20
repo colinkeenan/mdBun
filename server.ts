@@ -1572,19 +1572,18 @@ const CHECKLIST = "check-equations.md";
 // Re-read the file on every request so edits show up on refresh.
 async function renderFile(path: string) {
   const source = await Bun.file(path).text();
-  const title = replaceShortcodes(
-    source.match(/^#\s+(.+)$/m)?.[1] ?? basename(path, extname(path)),
-  );
+  const title =
+    plainHeading(source.match(/^#\s+(.+)$/m)?.[1] ?? "") || basename(path, extname(path));
   const { body, math, code } = renderMarkdown(source);
   // A file of a book says in its tab which book it is of: "Contents" is in every one of them.
   const book = await bookOf(dirname(path));
-  const tab = book && book !== title ? `${title} — ${book}` : title;
+  const tab = tabOf(title, book);
   const checklist =
     basename(path) !== CHECKLIST && (await Bun.file(join(dirname(path), CHECKLIST)).exists());
   return page(tab, body, {
     math,
     code,
-    book,
+    book: book.title,
     live: LIVE_RELOAD ? path : undefined,
     browse: dirUrl(dirname(path)),
     place: true,
@@ -1596,8 +1595,30 @@ async function renderFile(path: string) {
 // (pdf2md writes it so). Its first heading is the book's title.
 const BOOK_FILE = "book.md";
 
-/** The title of the book a folder holds, or "" if the folder is no book. */
-const bookOf = (dir: string) => headingOf(join(dir, BOOK_FILE));
+/**
+ * The book a folder holds: its title ("" if the folder is no book), and whom it is by in a
+ * word, an author's last name or a course's school, if book.md opens with a line
+ * `<!-- pdf2md:by Lucid -->`. Change that line, or add it, to change the name: pdf2md keeps it.
+ */
+async function bookOf(dir: string): Promise<{ title: string; by: string }> {
+  const path = join(dir, BOOK_FILE);
+  const title = await headingOf(path);
+  if (!title) return { title, by: "" };
+  const top = await Bun.file(path).slice(0, 512).text();
+  return { title, by: top.match(/^<!--\s*pdf2md:by\s+(.+?)\s*-->/)?.[1] ?? "" };
+}
+
+/**
+ * The name of a tab: whom the book is by, the file's title in quotes, the book's title, as in
+ * Lucid "Chapter 4 Lagrangian Mechanics" Advanced Theoretical Physics. A course's title is
+ * written without the school it opens with: MIT "Readings" Relativistic Quantum Field Theory I.
+ */
+function tabOf(title: string, book: { title: string; by: string }): string {
+  if (!book.title) return title;
+  const rest = book.by && book.title.startsWith(book.by + " ") ? book.title.slice(book.by.length + 1) : book.title;
+  const chapter = title === book.title ? [] : [`"${title}"`];
+  return [book.by, ...chapter, rest].filter(Boolean).join(" ");
+}
 
 // A book's tabs have an icon of their own: the first letters of its title on the book's own
 // color, so tabs of different books are told apart even where there is no room for a title.
@@ -1634,11 +1655,23 @@ function bookIcon(title: string): string {
 const MD_FILE = /\.(md|markdown)$/i;
 const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }).compare;
 
+/** A heading's words: a line break in it is a space, and its tags and link targets are left out. */
+const plainHeading = (heading: string) =>
+  replaceShortcodes(
+    heading
+      .replace(/<br\s*\/?>/gi, " ")
+      .replace(/<[^>]+>/g, "")
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#36;/g, "$").replace(/&#96;/g, "`")
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
+
 /** The first "# heading" near the top of a Markdown file, or "" if there isn't one. */
 async function headingOf(path: string): Promise<string> {
   try {
     const top = await Bun.file(path).slice(0, 8192).text();
-    return replaceShortcodes(top.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "");
+    return plainHeading(top.match(/^#\s+(.+)$/m)?.[1] ?? "");
   } catch {
     return "";
   }
@@ -1726,7 +1759,7 @@ async function renderDir(dir: string) {
   return page(
     name,
     `<h1>📁 ${escapeHtml(name)}</h1>\n<ul class="listing">\n${items.join("\n")}\n</ul>`,
-    { live: LIVE_RELOAD ? dir : undefined, dir: true, browse: dirUrl(dir), book: await bookOf(dir) },
+    { live: LIVE_RELOAD ? dir : undefined, dir: true, browse: dirUrl(dir), book: (await bookOf(dir)).title },
   );
 }
 
