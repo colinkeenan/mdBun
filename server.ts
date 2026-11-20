@@ -1319,6 +1319,8 @@ function page(
     place?: boolean;
     /** Show the edit button; checklist: the folder has a check-equations.md to link to. */
     edit?: { checklist: boolean };
+    /** The book the page is of: its tab gets the book's icon in place of mdBun's. */
+    book?: string;
   } = {},
 ) {
   const html = `<!doctype html>
@@ -1327,7 +1329,7 @@ function page(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
-  <link rel="icon" type="image/svg+xml" href="${ICON_URL}">
+  <link rel="icon" type="image/svg+xml" href="${opts.book ? bookIconUrl(opts.book) : ICON_URL}">
   <style>${CSS}</style>${THEME_HEAD}${PDF_HEAD}${opts.place ? PLACE_HEAD : ""}${opts.live ? liveHead(opts.live, opts.dir) : ""}${opts.browse ? BROWSE_HEAD : ""}${opts.edit ? EDIT_HEAD : ""}${opts.math ? KATEX_HEAD : ""}${opts.code ? HLJS_HEAD : ""}
 </head>
 <body>
@@ -1574,16 +1576,59 @@ async function renderFile(path: string) {
     source.match(/^#\s+(.+)$/m)?.[1] ?? basename(path, extname(path)),
   );
   const { body, math, code } = renderMarkdown(source);
+  // A file of a book says in its tab which book it is of: "Contents" is in every one of them.
+  const book = await bookOf(dirname(path));
+  const tab = book && book !== title ? `${title} — ${book}` : title;
   const checklist =
     basename(path) !== CHECKLIST && (await Bun.file(join(dirname(path), CHECKLIST)).exists());
-  return page(title, body, {
+  return page(tab, body, {
     math,
     code,
+    book,
     live: LIVE_RELOAD ? path : undefined,
     browse: dirUrl(dirname(path)),
     place: true,
     edit: { checklist },
   });
+}
+
+// A book is a folder with a book.md, the whole book in one file, beside its chapters' files
+// (pdf2md writes it so). Its first heading is the book's title.
+const BOOK_FILE = "book.md";
+
+/** The title of the book a folder holds, or "" if the folder is no book. */
+const bookOf = (dir: string) => headingOf(join(dir, BOOK_FILE));
+
+// A book's tabs have an icon of their own: the first letters of its title on the book's own
+// color, so tabs of different books are told apart even where there is no room for a title.
+const BOOK_ICON_URL = "/__book.svg";
+const bookIconUrl = (title: string) => `${BOOK_ICON_URL}?t=${encodeURIComponent(title)}`;
+
+/** "Advanced Theoretical Physics" → "ATP"; a number at the end is kept ("… Theory II" → "…2"). */
+function bookLetters(title: string): string {
+  const SMALL = /^(a|an|and|at|for|from|in|of|on|or|the|to|with)$/i;
+  const ROMAN: Record<string, string> = { I: "1", II: "2", III: "3", IV: "4", V: "5", VI: "6" };
+  const words = title.split(/[^\p{L}\p{N}]+/u).filter((w) => w && !SMALL.test(w));
+  const last = words.at(-1) ?? "";
+  const number = /^\d$/.test(last) ? last : ROMAN[last];
+  const letters = (number ? words.slice(0, -1) : words).map((w) => [...w][0].toUpperCase());
+  return number ? letters.slice(0, 2).join("") + number : letters.slice(0, 3).join("");
+}
+
+function bookIcon(title: string): string {
+  // FNV-1a over the title, its bits mixed (titles that begin alike get unlike colors), as a
+  // place on the color wheel
+  let h = 2166136261;
+  for (const c of title) h = Math.imul(h ^ c.codePointAt(0)!, 16777619) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+  const hue = ((h ^ (h >>> 16)) >>> 0) % 360;
+  const letters = bookLetters(title);
+  const size = letters.length > 2 ? 124 : letters.length > 1 ? 150 : 190;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect x="4" y="4" width="248" height="248" rx="44" fill="hsl(${hue} 65% 36%)"/>
+  <text x="128" y="128" dy=".36em" text-anchor="middle" ${letters.length > 2 ? 'textLength="232" lengthAdjust="spacingAndGlyphs" ' : ""}font-family="'Noto Sans', 'DejaVu Sans', Arial, sans-serif" font-weight="700" font-size="${size}" fill="#fff">${escapeHtml(letters)}</text>
+</svg>`;
 }
 
 const MD_FILE = /\.(md|markdown)$/i;
@@ -1681,7 +1726,7 @@ async function renderDir(dir: string) {
   return page(
     name,
     `<h1>📁 ${escapeHtml(name)}</h1>\n<ul class="listing">\n${items.join("\n")}\n</ul>`,
-    { live: LIVE_RELOAD ? dir : undefined, dir: true, browse: dirUrl(dir) },
+    { live: LIVE_RELOAD ? dir : undefined, dir: true, browse: dirUrl(dir), book: await bookOf(dir) },
   );
 }
 
@@ -2352,6 +2397,11 @@ const server = Bun.serve({
     // served, or refused, like any other file.
     if (pathname.startsWith("/__pdf/")) {
       return new Response(PDF_VIEWER, { headers: { "content-type": "text/html; charset=utf-8" } });
+    }
+    if (pathname === BOOK_ICON_URL) {
+      return new Response(bookIcon(url.searchParams.get("t") ?? ""), {
+        headers: { "content-type": "image/svg+xml", "cache-control": "no-cache" },
+      });
     }
     if (pathname === ICON_URL || pathname === "/favicon.ico") {
       // Read each time and never kept by the browser, so a changed icon shows on a reload.
