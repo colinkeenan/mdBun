@@ -80,13 +80,11 @@ mdBun's icon is a bun fresh from the oven, carrying the Markdown mark. For anoth
    mkdir -p ~/.shortcuts/tasks
    cat > ~/.shortcuts/tasks/Documents <<'EOF'
    #!/data/data/com.termux/files/usr/bin/sh
-   exec "$PREFIX/bin/md" --stay ~/Documents
+   exec "$PREFIX/bin/md" ~/Documents
    EOF
    chmod 700 ~/.shortcuts ~/.shortcuts/tasks
    chmod +x ~/.shortcuts/tasks/Documents
    ```
-
-   `--stay` keeps the task going for as long as the server it started runs. Without it the task ends at once, Termux has nothing left to do, and Android freezes the server a few pages later. While it runs, Termux's notification shows one task.
 
    `~` is Termux's own home folder. For the phone's Documents folder, run `termux-setup-storage` once and use `~/storage/shared/Documents` in the script.
 
@@ -99,6 +97,8 @@ mdBun's icon is a bun fresh from the oven, carrying the Markdown mark. For anoth
    ```
 
 4. Long-press the home screen, choose Widgets, drag the Termux:Widget shortcut (the small one, not the list) onto the screen and pick `Documents`.
+
+Open the Termux app before you tap the icon, and leave its window open. With no Termux window open, Android freezes the server after some pages, and they stop loading. To get going again, open Termux and run `md --stop`.
 
 If a tap does nothing, move the script up to `~/.shortcuts/Documents`: there it runs in a terminal, where you can read the error.
 
