@@ -3,8 +3,9 @@
 #
 # md.in and mdBun.desktop.in are the templates. This script fills in what differs from one
 # computer to the next: the folder mdBun is in, where bun is, how an old server is stopped,
-# how the browser is opened, and where `md` will be installed. Run it again if you move the
-# folder. The README's Install section has the `install` commands that follow it.
+# how Android is kept from freezing the server, how the browser is opened, and where `md` will
+# be installed. Run it again if you move the folder. The README's Install section has the
+# `install` commands that follow it.
 set -euo pipefail
 shopt -u patsub_replacement 2>/dev/null || true   # bash 5.2: keep `&` in a path literal
 
@@ -19,6 +20,9 @@ if [ -n "${TERMUX_VERSION:-}" ]; then
     bash="$PREFIX/bin/bash"
     # KILL, because a server that Android has frozen never gets to act on a gentler signal.
     stop='pkill -KILL -f server.ts'
+    # Termux's wake lock keeps Android from freezing the server when no Termux window is open.
+    lock='termux-wake-lock'
+    unlock='termux-wake-unlock'
     bun='grun "$HOME/.bun/bin/bun"'
     open='termux-open-url'
     desktop=
@@ -26,6 +30,8 @@ else
     bindir="$HOME/.local/bin"
     bash=/bin/bash
     stop='fuser -k 3000/tcp 2>/dev/null'
+    lock=':'
+    unlock=':'
     # The full path, because a file manager may not have bun's folder on its PATH.
     bun_path="$(command -v bun)" || { echo "build.sh: bun is not on the PATH" >&2; exit 1; }
     bun="$(printf %q "$bun_path")"
@@ -38,6 +44,8 @@ mkdir -p "$out"
 md="$(<"$here/md.in")"
 md="#!$bash"$'\n'"${md#*$'\n'}"   # the first line: where bash is
 md="${md//@STOP@/$stop}"
+md="${md//@LOCK@/$lock}"
+md="${md//@UNLOCK@/$unlock}"
 md="${md//@DIR@/$(printf %q "$here")}"
 md="${md//@BUN@/$bun}"
 md="${md//@OPEN@/$open}"

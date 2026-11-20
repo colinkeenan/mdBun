@@ -98,7 +98,7 @@ mdBun's icon is a bun fresh from the oven, carrying the Markdown mark. For anoth
 
 4. Long-press the home screen, choose Widgets, drag the Termux:Widget shortcut (the small one, not the list) onto the screen and pick `Documents`.
 
-Open the Termux app before you tap the icon, and leave its window open. With no Termux window open, Android freezes the server after some pages, and they stop loading. To get going again, open Termux and run `md --stop`.
+The server keeps running with no Termux window open, and after you swipe Termux:Widget away. `md` takes Termux's wake lock for that, which Termux's notification shows as "wake lock held"; without it, Android freezes the server after some pages. `md --stop` gives the lock back.
 
 If a tap does nothing, move the script up to `~/.shortcuts/Documents`: there it runs in a terminal, where you can read the error.
 

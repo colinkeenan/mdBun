@@ -4,9 +4,14 @@
 # is added to it; otherwise it's started. With no argument, the current folder is shown.
 #
 #   md --stop    stops the server.
+#
+# In Termux the server needs Termux's wake lock: without it, Android freezes the server after
+# some pages unless a Termux window is open. `md` takes the lock and `md --stop` gives it back.
+# Everywhere else those two lines are `:`, which does nothing.
 if [ "$1" = --stop ]; then
     # Ask it to stop. One that doesn't answer (too old, or frozen by Android) is killed.
     curl -sf -m 2 -X POST http://localhost:3000/__stop || { @STOP@; }
+    @UNLOCK@
     exit 0
 fi
 file="$(realpath "${1:-.}")" || exit 1
@@ -16,6 +21,8 @@ file="$(realpath "${1:-.}")" || exit 1
 open_file() {
     curl -sf -m 5 --data-urlencode "path=$file" http://localhost:3000/__open
 }
+
+@LOCK@
 
 if ! url=$(open_file); then
     # Nothing is running, or a server that doesn't answer is: replace it.
