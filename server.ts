@@ -1615,7 +1615,12 @@ async function bookOf(dir: string): Promise<{ title: string; by: string }> {
  */
 function tabOf(title: string, book: { title: string; by: string }): string {
   if (!book.title) return title;
-  const rest = book.by && book.title.startsWith(book.by + " ") ? book.title.slice(book.by.length + 1) : book.title;
+  // (a school, in capitals, is left out wherever the title has it: "(UCSD Physics 130)")
+  const school = book.by.length > 1 && book.by === book.by.toUpperCase();
+  const words = book.title.split(" ");
+  const at = words.findIndex((w, i) => (i === 0 || school) && w.replace(/^\W+|\W+$/g, "") === book.by);
+  if (at >= 0) words[at] = words[at].replace(book.by, "");
+  const rest = words.filter(Boolean).join(" ");
   const chapter = title === book.title ? [] : [`"${title}"`];
   return [book.by, ...chapter, rest].filter(Boolean).join(" ");
 }
