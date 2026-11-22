@@ -41,8 +41,10 @@ const CSS = `
   :root[data-theme="light"] { color-scheme: light; }
   :root[data-theme="dark"] { color-scheme: dark; }
   body { background: Canvas; color: CanvasText; }
+  /* (a word longer than a line, such as a web address on a phone, is broken: the page is
+     not made wider than the window for it) */
   body { max-width: 760px; margin: 2rem auto; padding: 0 1rem;
-         font: 16px/1.6 system-ui, sans-serif; }
+         font: 16px/1.6 system-ui, sans-serif; overflow-wrap: break-word; }
   pre { padding: 1rem; overflow-x: auto; background: #8881; border-radius: 6px; }
   code { background: #8881; padding: 0.1em 0.3em; border-radius: 4px; }
   pre code, pre code.hljs { background: none; padding: 0; }
@@ -54,6 +56,29 @@ const CSS = `
   details { border: 1px solid #8885; border-radius: 6px; padding: 0.5rem 1rem; margin: 1rem 0; }
   summary { cursor: pointer; font-weight: 600; }
   .math.display { display: block; text-align: center; margin: 1em 0; overflow-x: auto; }
+  /* A displayed formula with its number: the formula in the middle of the line where there
+     is room, clear of the number at the right in any case (the third column is as wide as
+     the number at least; the first gives way). Under it (.eq-below), the number has a row
+     of its own and the formula the whole width. */
+  .math.display.numbered { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(max-content, 1fr);
+                           align-items: center; overflow-x: visible; }
+  .math.display.numbered > .eq-body { grid-column: 2; }
+  .math.display.numbered > .eqno { grid-column: 3; justify-self: end; padding-left: 0.8em; white-space: nowrap; }
+  .math.display.numbered.eq-below { grid-template-columns: minmax(0, 1fr); }
+  .math.display.numbered.eq-below > .eq-body, .math.display.numbered.eq-below > .eqno { grid-column: 1; }
+  .math.display.numbered.eq-below > .eqno { margin-top: -0.6em; padding-bottom: 0.4em; }
+  /* (under a page's bar that hangs out of the paragraph above, not squeezed beside it) */
+  .math.display { clear: both; }
+  .math.display > .eq-body { display: block; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+  /* (where formulas are measured: off the page, and sealed from it, so that measuring
+     lays out this box alone) */
+  .eq-ruler { display: block; position: absolute; left: -9999px; top: 0; width: 6000px; height: 200px;
+              contain: strict; visibility: hidden; white-space: nowrap; }
+  /* (A formula that fits is not to be scrolled by the pixel or two that the ink of a tall
+     bracket leans out of its box. It keeps the space above and under it that it had as a
+     box to be scrolled, the same as a numbered one has.) */
+  .math.display.eq-ok:not(.numbered) { display: flow-root; }
+  .math.display.eq-ok, .math.display.eq-ok > .eq-body { overflow: visible; }
   /* A paragraph that pictures break off in the middle of a sentence (pdf2md writes its two
      parts with the pictures between, in a float as wide as the text): the parts are one run
      of words, so the line the first part ends in is filled with the words that follow. */
@@ -210,27 +235,441 @@ const CSS = `
 // The CDN versions are pinned exactly: jsDelivr lets browsers cache a pinned file for a year,
 // but a version range like "katex@0.16" for only a week, after which it is downloaded again.
 const KATEX = "https://cdn.jsdelivr.net/npm/katex@0.16.47/dist";
-const KATEX_HEAD = `
-  <link rel="stylesheet" href="${KATEX}/katex.min.css">
-  <script defer src="${KATEX}/katex.min.js"></script>
-  <script>
-    document.addEventListener("DOMContentLoaded", () => {
+// The page's math script: it sets every formula, and fits the displayed ones to the width
+// they have (see its "Fitting" part). String.raw keeps its backslashes as written; it must
+// not use a backtick or a dollar sign before a brace.
+const MATH_SCRIPT = String.raw`
+    document.addEventListener("DOMContentLoaded", function () {
       if (!window.katex) return; // CDN unreachable: the TeX source stays visible
-      for (const el of document.querySelectorAll(".math")) {
-        const display = el.classList.contains("display");
-        const src = el.textContent;
-        let tex = src.slice(Number(el.dataset.open), src.length - Number(el.dataset.close)).trim();
-        // An equation's number written behind it as text (pdf2md does: GitHub breaks an
-        // equation with a \\tag into a column of symbols) goes to the right margin here.
-        if (display) tex = tex.replace(/\\\\qquad \\\\text\\{\\(([^{}]*)\\)\\}$/, "\\\\tag{$1}");
+
+      // ---- Setting the formulas -------------------------------------------------------------
+      // An equation's number stands in an element of its own beside the formula, so that the
+      // formula can be kept clear of it (KaTeX's own \tag is laid over the formula's box, and a
+      // wide formula runs into it).
+      var displays = [];
+      function set(el, tex, display) {
         try {
           katex.render(tex, el, { displayMode: display, throwOnError: false });
         } catch (e) {
           console.error(e);
         }
       }
+      var all = document.querySelectorAll(".math");
+      for (var k = 0; k < all.length; k++) {
+        var el = all[k];
+        var display = el.classList.contains("display");
+        var src = el.textContent;
+        var tex = src.slice(Number(el.dataset.open), src.length - Number(el.dataset.close)).trim();
+        if (!display) { set(el, tex, false); continue; }
+        // The number: written behind the equation as text (pdf2md does: GitHub breaks an
+        // equation with a \tag into a column of symbols), or as a \tag at its end.
+        var m = /\\qquad \\text\{\(([^{}]*)\)\}$/.exec(tex) || /\\tag\{([^{}]*)\}$/.exec(tex);
+        var num = null;
+        if (m && tex.slice(0, m.index).indexOf("\\tag") < 0) {
+          num = m[1];
+          tex = tex.slice(0, m.index).trim();
+        } else if (tex.indexOf("\\tag") >= 0) {
+          set(el, tex, true); // tags of its own making: KaTeX's business
+          continue;
+        }
+        el.textContent = "";
+        var body = document.createElement("span");
+        body.className = "eq-body";
+        el.appendChild(body);
+        set(body, tex, true);
+        if (num !== null) {
+          var no = document.createElement("span");
+          no.className = "eqno";
+          el.appendChild(no);
+          try {
+            katex.render("\\text{(" + num.replace(/[\\{}$&#^_%~]/g, "\\$&") + ")}", no, { throwOnError: true });
+          } catch (e) {
+            no.textContent = "(" + num + ")";
+          }
+          el.classList.add("numbered");
+        }
+        displays.push({ el: el, body: body, no: num !== null ? el.lastChild : null, tex: tex, shown: tex });
+      }
+
+      // ---- Reading a formula ----------------------------------------------------------------
+      var REL = {};
+      ("= < > \\approx \\equiv \\sim \\simeq \\cong \\neq \\ne \\leq \\le \\geq \\ge \\ll \\gg \\propto \\to " +
+        "\\rightarrow \\longrightarrow \\Rightarrow \\Longrightarrow \\leftrightarrow \\Leftrightarrow \\mapsto \\implies \\iff")
+        .split(" ").forEach(function (r) { REL[r] = 1; });
+      var BIN = { "+": 1, "-": 1, "\\pm": 1, "\\mp": 1 };
+      var OPEN = { "(": 1, "[": 1, "\\{": 1, "\\langle": 1, "\\lbrace": 1, "\\lbrack": 1 };
+      var CLOSE = { ")": 1, "]": 1, "\\}": 1, "\\rangle": 1, "\\rbrace": 1, "\\rbrack": 1 };
+      var SPACE = { "\\,": 1, "\\;": 1, "\\:": 1, "\\!": 1, "\\ ": 1, "\\quad": 1, "\\qquad": 1 };
+
+      // What stands at the top level of a piece of TeX (in no group, no \left…\right, no
+      // \begin…\end): the places where a line may be broken, each with a level —
+      //   1  before a relation sign, outside brackets
+      //   2  before a plus or minus sign that stands between two terms, outside brackets
+      //   3  the same inside plain brackets, which TeX lets a line end in
+      //   4, 5  the same inside one or two pairs of \left … \right, which have to be closed
+      //         at the line's end and opened again on the next (\right. and \left.)
+      //   6, 7  the same, inside plain brackets there
+      // — the row ends and column marks of an environment, and where the first group,
+      // \left or \begin of the text is closed.
+      function scan(s) {
+        var out = { breaks: [], rows: [], amps: [], close: -1 };
+        var group = 0, left = 0, env = 0, paren = 0;
+        var outer = []; // the plain brackets open around each \left that is open
+        var after = "open"; // what the next sign follows: "open" (it is a sign of its term) or "term"
+        var i = 0, n = s.length;
+        function closed(at) {
+          if (out.close < 0 && group === 0 && left === 0 && env === 0) out.close = at;
+        }
+        while (i < n) {
+          var c = s[i];
+          var tok = c;
+          if (c === "\\") {
+            var m = /^\\([a-zA-Z]+|[\s\S])/.exec(s.slice(i));
+            tok = m ? m[0] : c;
+          }
+          var top = group === 0 && left === 0 && env === 0;
+          var next = i + tok.length;
+          if (tok === "\\left" || tok === "\\right") {
+            // (the bracket it sizes is part of it)
+            var d = /^\s*(\\[a-zA-Z]+|\\[\s\S]|[\s\S])/.exec(s.slice(next));
+            if (d) next += d[0].length;
+            if (tok === "\\left") { left++; outer.push(paren); paren = 0; after = "open"; }
+            else { left = Math.max(0, left - 1); paren = outer.length ? outer.pop() : 0; after = "term"; closed(next); }
+          } else if (tok === "\\begin" || tok === "\\end") {
+            var e = /^\s*\{[^{}]*\}/.exec(s.slice(next));
+            if (e) next += e[0].length;
+            if (tok === "\\begin") { env++; after = "open"; }
+            else { env = Math.max(0, env - 1); after = "term"; closed(next); }
+          } else if (tok === "{") {
+            group++; after = "open";
+          } else if (tok === "}") {
+            group = Math.max(0, group - 1); after = "term"; closed(next);
+          } else if (tok === "\\\\") {
+            if (top) out.rows.push(i);
+            after = "open";
+          } else if (tok === "&") {
+            if (top) out.amps.push(i);
+            after = "open";
+          } else if (REL[tok]) {
+            if (top && paren === 0 && i > 0) out.breaks.push({ at: i, level: 1, open: 0 });
+            after = "open";
+          } else if (BIN[tok]) {
+            if (top && after === "term") out.breaks.push({ at: i, level: paren === 0 ? 2 : 3, open: 0 });
+            else if (group === 0 && env === 0 && left > 0 && left <= 2 && after === "term") out.breaks.push({ at: i, level: (paren === 0 ? 3 : 5) + left, open: left });
+            after = "open";
+          } else if (OPEN[tok]) {
+            if (group === 0 && env === 0) paren++;
+            after = "open";
+          } else if (CLOSE[tok]) {
+            if (group === 0 && env === 0) paren = Math.max(0, paren - 1);
+            after = "term";
+          } else if (tok === "^" || tok === "_" || tok === ",") {
+            after = "open";
+          } else if (SPACE[tok] || /^\s$/.test(tok)) {
+            // (space: the sign after it follows what stood before it)
+          } else {
+            after = "term";
+          }
+          i = next;
+        }
+        return out;
+      }
+
+      // A formula as rows of two parts, lined up between the parts — "A" and "= B" — with
+      // what stands around the rows: nothing, or a frame, or the braces of a system.
+      var TAIL = /^\s*[.,;:]?\s*$/;
+      function read(tex) {
+        var t = tex.trim();
+        var open = "\\begin{aligned}", shut = "\\end{aligned}";
+        if (t.indexOf("\\boxed{") === 0) {
+          var c = scan(t).close;
+          if (c > 0 && TAIL.test(t.slice(c))) {
+            var inner = read(t.slice(7, c - 1));
+            return { pre: "\\boxed{" + inner.pre, post: inner.post + "}" + t.slice(c), rows: inner.rows, was: inner.was };
+          }
+        }
+        if (t.indexOf("\\left\\{") === 0) {
+          var c2 = scan(t).close;
+          if (c2 > 0 && TAIL.test(t.slice(c2)) && /\\right\\\}$/.test(t.slice(0, c2))) {
+            var body = t.slice(7, c2).replace(/\\right\\\}$/, "").trim();
+            if (body.indexOf(open) === 0 && scan(body).close === body.length) {
+              var sys = read(body);
+              if (sys.was === "rows") return { pre: "\\left\\{ " + sys.pre, post: sys.post + " \\right\\}" + t.slice(c2), rows: sys.rows, was: "rows" };
+            }
+          }
+        }
+        if (t.indexOf(open) === 0) {
+          var c3 = scan(t).close;
+          if (c3 > 0 && TAIL.test(t.slice(c3))) {
+            var inside = t.slice(open.length, c3 - shut.length);
+            var marks = scan(inside);
+            var rows = [], from = 0, good = true;
+            marks.rows.concat([inside.length]).forEach(function (end) {
+              var row = inside.slice(from, end);
+              var amps = marks.amps.filter(function (a) { return a >= from && a < end; });
+              if (amps.length === 1) rows.push({ l: row.slice(0, amps[0] - from).trim(), r: row.slice(amps[0] - from + 1).trim() });
+              else if (amps.length === 0 && row.trim() === "") { /* an empty last row */ }
+              else good = false;
+              from = end + 2;
+            });
+            if (good && rows.length) return { pre: "", post: t.slice(c3), rows: rows, was: "rows" };
+          }
+        }
+        // one line: its left side and the rest, parted before the first relation sign
+        var first = scan(t).breaks.filter(function (b) { return b.level === 1; })[0];
+        return { pre: "", post: "", rows: [first ? { l: t.slice(0, first.at).trim(), r: t.slice(first.at).trim() } : { l: "", r: t }], was: "line" };
+      }
+
+      // The pieces a text may be broken into, at breaks up to a level: each with the number of
+      // \left brackets that are open where it begins.
+      function pieces(s, level) {
+        var out = [], from = 0, open = 0;
+        scan(s).breaks.forEach(function (b) {
+          if (b.level <= level && s.slice(from, b.at).trim() !== "") {
+            out.push({ raw: s.slice(from, b.at).trim(), open: open });
+            from = b.at;
+            open = b.open;
+          }
+        });
+        out.push({ raw: s.slice(from).trim(), open: open });
+        return out;
+      }
+      function times(what, n) {
+        return n > 0 ? new Array(n + 1).join(what) : "";
+      }
+      // Pieces from..to as one line: the brackets open at its start opened (invisibly), those
+      // open at its end closed.
+      function lineOf(parts, from, to) {
+        var raw = parts.slice(from, to + 1).map(function (p) { return p.raw; }).join(" ");
+        var open = parts[from].open, shut = to + 1 < parts.length ? parts[to + 1].open : 0;
+        return times("\\left. ", open) + (open && SIGN.test(raw) ? "{} " : "") + raw + times(" \\right.", shut);
+      }
+
+      // ---- Measuring ------------------------------------------------------------------------
+      // All measuring is done in a box of its own, off the page and sealed from it (see its
+      // style): setting a piece there and asking for its width lays out that box alone, not
+      // the whole page each time.
+      var ruler = document.createElement("span");
+      ruler.className = "math eq-ruler";
+      document.body.appendChild(ruler);
+      var widths = {};
+      // How wide a formula or a piece of one is set, in px (null: it cannot be set on its own).
+      function width(tex) {
+        if (tex in widths) return widths[tex];
+        var w = null;
+        try {
+          // (without the MathML that goes with a formula for screen readers: laying that out
+          // takes as long again)
+          katex.render("\\displaystyle " + tex, ruler, { throwOnError: true, output: "html" });
+          w = ruler.firstChild.getBoundingClientRect().width;
+        } catch (e) {}
+        return (widths[tex] = w);
+      }
+      var SIGN = /^(=|<|>|\+|-|\\(approx|equiv|sim|simeq|cong|neq|ne|leq|le|geq|ge|ll|gg|propto|to|rightarrow|longrightarrow|Rightarrow|Longrightarrow|leftrightarrow|Leftrightarrow|mapsto|implies|iff|pm|mp)(?![a-zA-Z]))/;
+      var RELSIGN = /^(=|<|>|\\(approx|equiv|sim|simeq|cong|neq|ne|leq|le|geq|ge|ll|gg|propto|to|rightarrow|longrightarrow|Rightarrow|Longrightarrow|leftrightarrow|Leftrightarrow|mapsto|implies|iff)(?![a-zA-Z]))/;
+      // (a piece that opens with a sign is measured with the space the sign has in a formula)
+      function pieceWidth(parts, k) {
+        var t = lineOf(parts, k, k);
+        return width(SIGN.test(t) ? "{}" + t : t);
+      }
+
+      // Lines filled with pieces, each no wider than "room" (the lines after the first that
+      // open with a plus or minus sign are set in by "inset", and have that much less; with
+      // "hang", every line after the first). Each line: its TeX, and whether it opens with a
+      // relation sign.
+      function fill(parts, room, inset, hang) {
+        var lines = [], from = -1, used = 0, mine = room;
+        function close(to) {
+          lines.push({ tex: lineOf(parts, from, to), rel: RELSIGN.test(parts[from].raw) });
+        }
+        for (var k = 0; k < parts.length; k++) {
+          var w = pieceWidth(parts, k);
+          if (w === null) return null;
+          if (from >= 0 && used + w > mine) {
+            close(k - 1);
+            from = -1;
+          }
+          if (from < 0) {
+            mine = room - (lines.length > 0 && (hang || !RELSIGN.test(parts[k].raw)) ? inset : 0);
+            if (w > mine) return null;
+            from = k;
+            used = w;
+          } else {
+            used += w;
+          }
+        }
+        if (from >= 0) close(parts.length - 1);
+        return lines;
+      }
+
+      // The formula broken so that it is no wider than "room", at breaks up to "level":
+      // its TeX, or null if that cannot be done. Lined up at the relation signs where the
+      // left sides are short; else each equation begins at the left and goes on set in.
+      function broken(f, room, level) {
+        var quad = width("\\quad") || 18;
+        // (what stands around the rows — a frame, braces, a full stop — takes its room)
+        var around = f.pre || f.post ? (width(f.pre + "\\begin{aligned} a \\\\ a \\\\ a \\end{aligned}" + f.post) || 0) - (width("a") || 0) + 4 : 0;
+        room -= around;
+        var lefts = f.rows.map(function (r) { return r.l === "" ? 0 : width(r.l); });
+        if (lefts.indexOf(null) >= 0) return null;
+        var lw = Math.max.apply(null, lefts);
+        var out = [], ok = lw <= 0.5 * room;
+        if (ok) {
+          for (var k = 0; k < f.rows.length && ok; k++) {
+            var lines = fill(pieces(f.rows[k].r, level), room - lw, quad, false);
+            if (!lines) { ok = false; break; }
+            lines.forEach(function (line, j) {
+              out.push((j === 0 ? f.rows[k].l + " & " : "& " + (line.rel ? "" : "\\quad ")) + line.tex);
+            });
+          }
+        }
+        if (!ok) {
+          out = [];
+          for (var q = 0; q < f.rows.length; q++) {
+            var all = f.rows[q].l === "" ? f.rows[q].r : f.rows[q].l + " " + f.rows[q].r;
+            var hung = fill(pieces(all, level), room, quad, true);
+            if (!hung) return null;
+            hung.forEach(function (line, j) { out.push("& " + (j === 0 ? "" : "\\quad ") + line.tex); });
+          }
+        }
+        if (out.length === f.rows.length && f.was === "line") return null; // nothing was broken
+        return { tex: f.pre + "\\begin{aligned} " + out.join(" \\\\ ") + " \\end{aligned}" + f.post, lines: out.length };
+      }
+
+      // ---- Fitting --------------------------------------------------------------------------
+      // A formula that is wider than its place (a narrow window, a phone) is, in this order:
+      // broken before its relation signs, with its number beside it; given the whole width,
+      // its number on a row of its own under it; broken before plus and minus signs too, first
+      // outside brackets, then inside them; and only if none of that is enough, left to be
+      // scrolled sideways.
+      //
+      // What a formula is to look like in a place "wide" px wide, "no" px of it its number's
+      // (0: it has none): { tex, below (the number has its own row), scroll }.
+      function plan(d, wide, no) {
+        var whole = d.natural !== undefined ? d.natural : width(d.tex);
+        if (whole === null || whole <= wide - no + 0.5) return { tex: d.tex, below: false, scroll: false };
+        var f = null;
+        function at(room, level) {
+          f = f || read(d.tex);
+          // (the pieces' widths, added up, are a little off the width of the whole: where it
+          // comes out too wide by some pixels, once more with that much less room)
+          var less = 0;
+          for (var again = 0; again < 3; again++) {
+            var b = broken(f, room - less, level);
+            if (!b) return null;
+            var w = width(b.tex);
+            if (w === null) return null;
+            if (w <= room + 0.5) return b.tex;
+            less += Math.ceil(w - room) + 2;
+          }
+          return null;
+        }
+        var tex = no ? at(wide - no, 1) : null;
+        if (tex) return { tex: tex, below: false, scroll: false };
+        if (no && whole <= wide + 0.5) return { tex: d.tex, below: true, scroll: false };
+        for (var level = 1; level <= 7; level++) {
+          tex = at(wide, level);
+          if (tex) return { tex: tex, below: no > 0, scroll: false };
+        }
+        return { tex: d.tex, below: no > 0, scroll: true };
+      }
+      function apply(d, p) {
+        if (p.tex !== d.shown) {
+          set(d.body, p.tex, true);
+          d.shown = p.tex;
+          d.natural = undefined;
+        }
+        d.el.classList.toggle("eq-below", p.below);
+        // (a formula that fits is not to be scrolled by the pixel or two that the ink of a
+        // tall bracket leans out of its box)
+        d.el.classList.toggle("eq-ok", !p.scroll);
+      }
+
+      var queue = [], pending = 0;
+      // The formulas' places are read in one go (one layout of the page); what each is to look
+      // like is worked out off the page; then they are written, a slice at a time, those
+      // nearest to what the window shows first, the others when the browser has nothing else
+      // to do, so that a long chapter does not hold up reading on a slow phone.
+      function fitAll() {
+        queue = [];
+        displays.forEach(function (d) {
+          var wide = d.el.clientWidth;
+          if (wide === 0) return; // not shown (in a note that is folded)
+          var box = d.el.getBoundingClientRect();
+          if (d.shown === d.tex && d.natural === undefined) {
+            var bases = d.body.querySelectorAll(".katex-html > .base");
+            if (bases.length) d.natural = bases[bases.length - 1].getBoundingClientRect().right - bases[0].getBoundingClientRect().left;
+          }
+          queue.push({ d: d, wide: wide, no: d.no ? d.no.offsetWidth : 0, y: box.top + window.scrollY });
+        });
+        slice();
+      }
+      function nearest() {
+        var middle = window.scrollY + window.innerHeight / 2, best = 0;
+        for (var k = 1; k < queue.length; k++) {
+          if (Math.abs(queue[k].y - middle) < Math.abs(queue[best].y - middle)) best = k;
+        }
+        return best;
+      }
+      function slice() {
+        pending = 0;
+        var until = performance.now() + 25, plans = [];
+        while (queue.length && (performance.now() < until || plans.length < 2)) {
+          var q = queue.splice(nearest(), 1)[0];
+          var p = plan(q.d, q.wide, q.no);
+          if (p.tex !== q.d.shown || p.below !== q.d.el.classList.contains("eq-below") || p.scroll === q.d.el.classList.contains("eq-ok")) plans.push([q.d, p]);
+        }
+        if (plans.length) {
+          // What is at the top of the window stays there, whatever the formulas above it come
+          // to in height (the browser may see to that itself: then nothing is left to do).
+          var mark = window.scrollY > 0 ? document.elementFromPoint(window.innerWidth / 2, 8) : null;
+          var was = mark ? mark.getBoundingClientRect().top : 0;
+          plans.forEach(function (x) { apply(x[0], x[1]); });
+          if (mark && document.contains(mark)) {
+            var moved = mark.getBoundingClientRect().top - was;
+            if (Math.abs(moved) > 1) window.scrollBy(0, moved);
+          }
+        }
+        ruler.textContent = ""; // (nothing of it is to be found by a search of the page)
+        if (!queue.length) { document.documentElement.dataset.mathFit = "done"; return; }
+        delete document.documentElement.dataset.mathFit;
+        pending = window.requestIdleCallback ? -window.requestIdleCallback(slice, { timeout: 400 }) : setTimeout(slice, 30);
+      }
+      // (the window is moved to formulas that are not fitted yet: those next, at once)
+      window.addEventListener("scroll", function () {
+        if (!queue.length || !pending) return;
+        if (Math.abs(queue[nearest()].y - window.scrollY - window.innerHeight / 2) > 2 * window.innerHeight) return;
+        if (pending < 0) window.cancelIdleCallback(-pending); else clearTimeout(pending);
+        slice();
+      }, { passive: true });
+      if (!displays.length) return;
+      var timer = 0;
+      function later() {
+        clearTimeout(timer);
+        timer = setTimeout(fitAll, 150);
+      }
+      // The widths are those of KaTeX's fonts: not before they are there. (Laying the page
+      // out makes the browser fetch them; fonts that come later are fitted to again.)
+      void document.body.offsetWidth;
+      var fonts = document.fonts;
+      (fonts && fonts.ready ? fonts.ready : Promise.resolve()).then(function () {
+        fitAll();
+        if (fonts && fonts.addEventListener) fonts.addEventListener("loadingdone", function () { widths = {}; later(); });
+        var last = window.innerWidth;
+        window.addEventListener("resize", function () {
+          if (window.innerWidth === last) return;
+          last = window.innerWidth;
+          later();
+        });
+        // (a note that is opened shows formulas that had no width before)
+        document.addEventListener("toggle", later, true);
+      });
     });
-  </script>`;
+`;
+const KATEX_HEAD = `
+  <link rel="stylesheet" href="${KATEX}/katex.min.css">
+  <script defer src="${KATEX}/katex.min.js"></script>
+  <script>${MATH_SCRIPT}</script>`;
 
 // highlight.js colors fenced code that declares a language (```ts, ```python, ...).
 // Blocks without a language are left alone rather than guessed at. Theme follows light/dark mode.

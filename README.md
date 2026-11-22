@@ -173,6 +173,15 @@ Only pages served by mdBun can ask for changes, and only to `.md` files in folde
 
 mdBun reads math in four forms: `$…$` and `$$…$$`, and the two that GitHub shows correctly whatever the formula contains, ``$`…`$`` in a sentence and a block fenced with ```` ```math ````. All four look the same in mdBun.
 
+A displayed formula is fitted to the width it has, so that on a phone it need not be scrolled sideways and never runs into its number. A formula that is too wide is, in this order:
+
+1. broken before its relation signs (`=`, `≈`, `→` and the like), the lines after the first lined up at the sign, its number beside it;
+2. given the whole width, its number on a row of its own under it at the right;
+3. broken before plus and minus signs too: first outside brackets, then inside them (a bracket set with `\left … \right` is closed at the line's end and opened again on the next, invisibly);
+4. left as it is, to be scrolled sideways, if none of that is enough: a wide matrix, a long fraction or root.
+
+A formula already in lines (`aligned`, also inside the braces of a system or a `\boxed` frame) has its lines broken the same way. The number is taken from a `\tag{…}` at the formula's end, or from the text pdf2md writes there for GitHub. Formulas near what the window shows are fitted first, the rest while the browser is idle; turning the phone or resizing the window fits them again.
+
 ### Tabs and reloading
 
 Each file has its own address from its full path, such as `http://localhost:3000/home/me/book/toc.md`, so every tab can show a different file. A tab reloads only when its own file, or an image it shows, changes.
