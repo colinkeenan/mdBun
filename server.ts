@@ -54,6 +54,10 @@ const CSS = `
   details { border: 1px solid #8885; border-radius: 6px; padding: 0.5rem 1rem; margin: 1rem 0; }
   summary { cursor: pointer; font-weight: 600; }
   .math.display { display: block; text-align: center; margin: 1em 0; overflow-x: auto; }
+  /* A paragraph that pictures break off in the middle of a sentence (pdf2md writes its two
+     parts with the pictures between, in a float as wide as the text): the parts are one run
+     of words, so the line the first part ends in is filled with the words that follow. */
+  .over-page > p { display: inline; }
 
   /* Footnotes */
   .footnotes { margin-top: 2.5rem; padding-top: 0.5rem; border-top: 1px solid #8885;
