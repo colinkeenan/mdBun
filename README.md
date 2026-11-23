@@ -155,10 +155,10 @@ Pages follow the system's light or dark setting. The ☀️/🌙 button switches
 The ✏️ button turns editing on for the tab and shows a bar of buttons. Every change is written to the `.md` file itself; the page then reloads and flashes what changed.
 
 * **Correct an equation**: click it. Its TeX opens with a preview that follows your typing and shows KaTeX's complaint if it cannot be typeset. **Save** or Ctrl+Enter writes it.
-* **Fix text**: select the words that are wrong, press the button and type them as they should be. The fix is written as `<span class="fix" data-was="…">`, which reads as normal text. Both dialogs ask what the change is for: [to match the original or to improve it](#to-match-the-original-or-to-improve-it). While editing, fixes are underlined with dots; click one to change or undo it (a fix may hold a formula: the dialog shows its Markdown). The converted text kept in `data-was` may hold a formula too; its `$` and backticks are then written `&#36;` and `&#96;`, as pdf2md writes them. Words in a table can be fixed the same way, also in the title and the note that pdf2md sets across the top and the foot of a table.
+* **Fix text**: select what is wrong and press the button. [The dialog](#fixing-text) shows the selection as the file writes it, in Markdown, for you to change. Both dialogs ask what the change is for: [to match the original or to improve it](#to-match-the-original-or-to-improve-it). While editing, fixes are underlined with dots; click one to change or undo it. Words in a table can be fixed the same way, also in the title and the note that pdf2md sets across the top and the foot of a table.
 * **Note**: select words and press the button to add a collapsible note after their paragraph. Tick the box to also put a ✎ marker after the selected words; clicking the marker opens the note.
 * **Warning**: the same, as a box that is always visible, for example where you think the book is wrong.
-* **🔬 See the Markdown**: select anything (words, bold text, a link, a list, a table, a formula) and press the button to see how it is written in the file. The selection is highlighted within the whole of its paragraphs. Nothing is changed. This one is not held to plain words: the selection may run over formatting and formulas.
+* **🔬 See the Markdown**: select anything (words, bold text, a link, a list, a table, a formula) and press the button to see how it is written in the file. The selection is highlighted within the whole of its paragraphs. Nothing is changed, so it may be of anything: several paragraphs, a list, a displayed equation.
 * **Editor**: opens the file in [your own editor](#your-editor), at what you selected.
 * **Equations to check** opens `check-equations.md` if the folder has one.
 
@@ -173,10 +173,35 @@ Notes and warnings are Markdown and can hold math. To change or remove one, clic
 
 Two limits:
 
-* **Selections must be plain words.** The page tells the server which occurrence of the selected words it means, and the server counts the same words in the file. If the selection includes a formula, a link or emphasis, or is in a footnote, the counts differ. Nothing is changed and you are asked to select a few plain words instead.
+* **A selection must be found in the file for sure.** The page tells the server which occurrence of the selection it means, and the server counts the same in the file. The selection may run over formulas, links, bold words and tags. The counts differ if the file writes something in it differently than the page shows it (`&amp;` for &, an emoji's `:name:`), or if it is in a footnote. Nothing is changed then, and you are asked to select a little more or less.
 * **Alert boxes inside a list, a footnote or another quote** cannot be told apart from the page, so in a file that has one, change alert boxes in the file itself.
 
 Only pages served by mdBun can ask for changes, and only to `.md` files in folders opened with `md`.
+
+#### Fixing text
+
+A fix is of whatever you select in one paragraph: words, with the formulas among them and with their formatting. Where the book has "the $z-$ direction", select the formula and the word behind it, and the dialog shows
+
+```
+<span class="fix" data-was="&#36;&#96;z -&#96;&#36; direction">
+$`z -`$ direction
+</span>
+```
+
+The first and the last line are the tags the fix is written between, as they will stand in the file. Between them is the Markdown of what you selected, which is yours to change: to ``$`z`$-direction``, or to anything else. What you type is written as you type it, so it may be Markdown, formulas and HTML (`<sub>`, `<br>`), and a space is there or gone as you leave it.
+
+**Style…** opens a field for CSS that the opening tag is to have. `white-space:nowrap;` keeps the words of the fix on one line, so that "z-direction" is not broken behind its hyphen. The tag shows the style as you type it. A style can be all there is to a fix: leave the words as they are and they are written between the tags unchanged. Whatever else you write into the tag in the file itself, a `title` for instance, stays when the fix is changed from the page.
+
+The converted text is kept in `data-was`, where the `$` and the backticks of a formula are written `&#36;` and `&#96;`, as pdf2md writes them, so that no program takes it for a formula of the page. **Undo this fix** puts the converted text back and takes the tags away.
+
+What a fix can't be of:
+
+* **A displayed equation**, or words of more than one paragraph. Click the equation to correct it.
+* **Words inside code.**
+* **A part of something that has to stay whole**: the first words of a link with the words behind the link, half of what is bold, half of what a tag holds. Select all of it, or only words inside it. (A selection that begins with the first word of a link or of bold words and goes on beyond their last takes their marks in.)
+* **A part of an earlier fix.** Click that fix, or select all of its words and no others.
+
+In a book from pdf2md, a formula that was read from a picture has pdf2md's mark of the picture behind it, `<!-- pdf2md:eq … -->`, and the dialog shows the mark. Leave it right behind its formula, or take it out with the formula. Such a formula is corrected per picture, so pdf2md converts it corrected from then on; the converted text that the fix keeps is written with the formula as you corrected it, and pdf2md finds the place of the fix again.
 
 #### To match the original or to improve it
 

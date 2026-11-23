@@ -172,8 +172,18 @@ const CSS = `
   .edit-dialog textarea, .edit-dialog input[type="text"] {
                  display: block; width: 100%; box-sizing: border-box; font: inherit;
                  padding: 0.3rem 0.5rem; margin: 0.3rem 0 0.6rem; }
-  .edit-dialog textarea[name="tex"] { font-family: ui-monospace, monospace; font-size: 0.9rem; }
+  .edit-dialog textarea[name="tex"], .edit-dialog textarea[name="now"], .edit-dialog input[name="style"] {
+                 font-family: ui-monospace, monospace; font-size: 0.9rem; }
   .edit-dialog label { display: block; }
+  .edit-dialog label[hidden] { display: none; }
+  /* A fix in its dialog: the tag it opens with, the Markdown, the tag that closes it. */
+  .edit-tag { display: block; font-family: ui-monospace, monospace; font-size: 0.85rem; color: #888;
+              white-space: pre-wrap; overflow-wrap: anywhere; }
+  .edit-dialog textarea[name="now"] { margin: 0.2rem 0; }
+  .edit-tag + .edit-why { margin-top: 0.6rem; }
+  .edit-style { margin-top: 0.4rem; }
+  .edit-style span { color: #888; }
+  .edit-dialog .edit-style input { margin-bottom: 0.4rem; }
   .edit-dialog input[type="checkbox"], .edit-dialog input[type="radio"] { margin-right: 0.4rem; }
   .edit-why { border: 0; padding: 0; margin: 0.2rem 0 0; }
   .edit-why legend { padding: 0; color: #888; }
@@ -1220,7 +1230,9 @@ const browseDialog = (dir: string) => `<button class="browse-toggle" type="butto
 
 // Editing. The ✏️ button turns it on for the tab (kept across reloads and links). Then:
 //  - clicking an equation opens its TeX, with a preview, to correct it in the file;
-//  - "Fix text" marks the selected words as a fix: <span class="fix" data-was="…">…</span>;
+//  - "Fix text" makes a fix of what is selected, <span class="fix" data-was="…">…</span>: its
+//    Markdown opens under that tag, to be changed as Markdown (the selection may hold
+//    formulas and formatting), and the tag can be given a style;
 //  - "Note" and "Warning" add <details class="mine"> or > [!WARNING] after the paragraph of
 //    the selected words (or after an equation, from its dialog), with an optional ✎ marker;
 //  - clicking one of those notes, or any alert box, opens its Markdown to change or delete it;
@@ -1236,6 +1248,8 @@ const browseDialog = (dir: string) => `<button class="browse-toggle" type="butto
 // Where the selected words are is told by counting: they are the nth of count places those
 // words appear in the page's text. The server counts the same words in the file and only
 // goes ahead if it finds as many, so a place it can't be sure of is refused, never guessed.
+// A formula among the words counts as one character, the same for every formula, and so
+// does the place where one piece of the page's text ends and the next begins (see place).
 //
 // As in BROWSE_HEAD, the script must not use "$" followed by "{", or backticks.
 const EDIT_HEAD = String.raw`
@@ -1247,7 +1261,7 @@ const EDIT_HEAD = String.raw`
       // Text the file doesn't have as such: formulas, footnotes (moved to the end), our own controls.
       const SKIP = "script, style, dialog, button, .find-bar, .edit-bar, .math, .footnotes, .fnref, .alert-title";
       const HINT = "Select words, or click an equation or a note.";
-      const NOT_FOUND = "These words aren't in the page's text as selected. Select a few plain words.";
+      const NOT_FOUND = "This selection can't be told apart on the page. Select a little more or less.";
       const texOf = new WeakMap(); // each formula's TeX, before KaTeX replaces it
       // What a change is for. The first is how fixes have always been written.
       const WHY =
@@ -1257,10 +1271,15 @@ const EDIT_HEAD = String.raw`
         '</fieldset>';
 
       // The selection: { text, nth, count }, see above.
-      // The page's text as the file has it, and where the range starts and ends in it.
+      // The page's text as the file has it, and where the range starts and ends in it. A
+      // formula is one character of it, FORMULA, whatever the formula holds.
+      const FORMULA = "\x01";
       function pageText(range) {
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-          acceptNode: (n) => n.parentElement && !n.parentElement.closest(SKIP) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+        const outside = (n) => n.parentElement && !n.parentElement.closest(SKIP);
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+          acceptNode: (n) =>
+            n.nodeType === 1 ? (n.matches(".math[data-i]") && outside(n) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP)
+            : outside(n) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
         });
         let text = "", start = -1, end = -1;
         for (let n; (n = walker.nextNode()); ) {
@@ -1268,6 +1287,15 @@ const EDIT_HEAD = String.raw`
           // a tag or a formula, which the server blanks out when it looks for the words in
           // the file. ("Kohn" in a link and "–Sham" behind it are not one more "Kohn–Sham".)
           if (text) text += "\0";
+          if (n.nodeType === 1) {
+            // (a formula the selection touches is selected, all of it)
+            if (range.intersectsNode(n)) {
+              if (start < 0) start = text.length;
+              end = text.length + 1;
+            }
+            text += FORMULA;
+            continue;
+          }
           if (start < 0) {
             if (n === range.startContainer) start = text.length + range.startOffset;
             else if (range.comparePoint(n, 0) >= 0) start = text.length;
@@ -1279,18 +1307,23 @@ const EDIT_HEAD = String.raw`
         return { text, start, end };
       }
 
+      // What is selected may run over formulas and over formatting: its text then has FORMULA
+      // for each formula, and "\0" wherever one piece of the page's text ends and the next
+      // begins (the server knows what the file may have there). The same words anywhere on
+      // the page are counted, in one piece or in several.
       function place(range) {
-        if (!range) throw new Error("Select some words first.");
+        if (!range) throw new Error("Select something first.");
         const { text, start, end } = pageText(range);
         const raw = start < 0 || end <= start ? "" : text.slice(start, end);
-        const words = raw.trim();
-        if (!words) throw new Error("Select some words first (not only a formula).");
-        const at = start + raw.length - raw.trimStart().length;
-        const re = new RegExp(words.split(/\s+/).map((w) => w.replace(/[.*+?^$\{}()|[\]\\]/g, "\\$&")).join("\\s+"), "g");
+        const picked = raw.replace(/^[\s\0]+|[\s\0]+$/g, "");
+        if (!picked) throw new Error("Select something first.");
+        const at = start + raw.search(/[^\s\0]/);
+        const re = new RegExp(picked.split(/(\s+|\0+)/).map((piece) =>
+          /^\s/.test(piece) ? "\\s+" : piece[0] === "\0" ? "\\0*" : piece.replace(/[.*+?^$\{}()|[\]\\]/g, "\\$&")).join(""), "g");
         let nth = -1, count = 0;
         for (const m of text.matchAll(re)) { if (m.index === at) nth = count; count++; }
         if (nth < 0) throw new Error(NOT_FOUND);
-        return { text: words, nth, count };
+        return { text: picked, nth, count };
       }
 
       // The selection for 🔬, which may run over formatting and formulas: its first and its
@@ -1448,32 +1481,69 @@ const EDIT_HEAD = String.raw`
           }
         }
 
-        // was: what an earlier fix replaced, when that fix is being changed, and to: what
-        // that fix was for.
-        function openFix(where, text, was, to) {
-          to = to || "match";
+        // A fix: of what is selected, or the one that was clicked (where: which). The server
+        // says how the file writes it, since the page has formulas and formatting only as
+        // HTML: the Markdown to change, and the tag the fix opens with (see peekFix).
+        async function askFix(where) {
+          let got;
+          try { got = await send({ op: "fixsource", where }); }
+          catch (err) { say(err.message, true); return; }
+          say(HINT);
+          openFix(where, got);
+        }
+
+        // The style as the server will write it into the tag (see styleOf and toAttr there).
+        function styleOf(typed) {
+          const css = typed.replace(/\s+/g, " ").trim();
+          const whole = css.match(/^style\s*=\s*(["'])(.*)\1$/i);
+          return (whole ? whole[2] : css).trim();
+        }
+        const toAttr = (text) =>
+          text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/\$/g, "&#36;").replace(/\x60/g, "&#96;");
+
+        // The Markdown stands between the tag the fix opens with and the one that closes
+        // it, as it will in the file. got.old: it is a fix already, which can be undone.
+        function openFix(where, got) {
           const form = ask("Fix the text",
             '<p class="edit-was"></p>' +
-            '<textarea name="now" rows="3" aria-label="The words as they should be"></textarea>' + WHY,
-            was == null ? "" : '<button type="button" class="edit-undo">Undo this fix</button>',
+            '<code class="edit-tag"></code>' +
+            '<label class="edit-style" hidden>Style of the tag <span>(CSS, such as white-space:nowrap;)</span>' +
+            '<input type="text" name="style" spellcheck="false" autocapitalize="off" autocomplete="off"></label>' +
+            '<textarea name="now" rows="3" autocapitalize="off" aria-label="The Markdown as it should be"></textarea>' +
+            '<code class="edit-tag">&lt;/span&gt;</code>' + WHY,
+            '<button type="button" class="edit-styling" title="Give the tag a style, such as white-space:nowrap; to keep its words on one line">Style…</button>' +
+            (got.old ? '<button type="button" class="edit-undo">Undo this fix</button>' : ""),
             (f) => {
               const now = f.elements.now.value.trim();
-              // (the words as they were, for another reason: an earlier fix only)
-              const same = now === text && (was == null || f.elements.to.value === to);
-              return same ? null : { op: "fix", where, now, to: f.elements.to.value };
+              const to = f.elements.to.value, style = styleOf(f.elements.style.value);
+              // (the same words for another reason: an earlier fix only)
+              const same = now === got.now && style === got.style && (!got.old || to === got.to);
+              return same ? null : { op: "fix", where, source: got.now, now, to, style };
             });
-          form.elements.to.value = to;
+          const area = form.elements.now, styling = form.elements.style;
+          form.elements.to.value = got.to;
+          styling.value = got.style;
           // What the words were is the conversion's doing, or the original itself.
-          const label = () => {
-            form.querySelector(".edit-was").textContent =
-              (form.elements.to.value === "improve" ? "The original has: " : "As converted: ") + (was == null ? text : was);
+          const show = () => {
+            const improve = form.elements.to.value === "improve";
+            const style = styleOf(styling.value);
+            form.querySelector(".edit-was").textContent = (improve ? "The original has: " : "As converted: ") + got.was;
+            form.querySelector(".edit-tag").textContent =
+              '<span class="fix" data-was="' + got.attr + '"' + (improve ? ' data-to="improve"' : "") + got.rest +
+              (style ? ' style="' + toAttr(style) + '"' : "") + ">";
           };
-          form.addEventListener("change", label);
-          label();
-          form.elements.now.value = text;
-          form.elements.now.select();
+          form.addEventListener("change", show);
+          styling.addEventListener("input", show);
+          show();
+          const field = form.querySelector(".edit-style");
+          field.hidden = !got.style;
+          form.querySelector(".edit-styling").addEventListener("click", () => { field.hidden = false; styling.focus(); });
+          area.value = got.now;
+          area.rows = Math.min(12, Math.max(3, got.now.split("\n").length + 1));
+          area.select();
           const undo = form.querySelector(".edit-undo");
-          if (undo) undo.addEventListener("click", () => { form.elements.now.value = was; form.requestSubmit(); });
+          if (undo) undo.addEventListener("click", () => { area.value = got.was; styling.value = ""; form.requestSubmit(); });
         }
 
         // kind: "note" (collapsible) or "warning" (a box). markAfter: what a ✎ marker would
@@ -1610,8 +1680,8 @@ const EDIT_HEAD = String.raw`
           let where;
           try { where = place(picked()); } catch (err) { say(err.message, true); return; }
           say(HINT);
-          if (button.dataset.do === "fix") openFix(where, where.text, null, "match");
-          else openNote(button.dataset.do, where, "the selected words");
+          if (button.dataset.do === "fix") askFix(where);
+          else openNote(button.dataset.do, where, "what you selected");
         });
 
         // While editing, a click on an equation corrects it, and one on a fix, a note of your
@@ -1630,12 +1700,9 @@ const EDIT_HEAD = String.raw`
             if (note && !e.target.closest("a, summary")) { e.preventDefault(); openOld(note); }
             return;
           }
-          // Which fix of the file it is, and its words as the file has them (a formula in
-          // it is not in the page's text, so the words alone would not find it).
-          const where = { fix: [...document.querySelectorAll("span.fix[data-was]")].indexOf(fix), was: fix.dataset.was };
-          send({ op: "fixsource", where })
-            .then((d) => openFix(where, d.now, fix.dataset.was, fix.dataset.to === "improve" ? "improve" : "match"))
-            .catch(() => say("This fix can only be changed in the file.", true));
+          // Which fix of the file it is.
+          e.preventDefault();
+          askFix({ fix: [...document.querySelectorAll("span.fix[data-was]")].indexOf(fix), was: fix.dataset.was });
         });
       });
     })();
@@ -1644,7 +1711,7 @@ const EDIT_HEAD = String.raw`
 /** The edit button, the bar it shows, and the dialog; checklist: link to check-equations.md. */
 const editTools = (checklist: boolean) => `<button class="edit-toggle" type="button" data-live="${LIVE_RELOAD ? 1 : 0}" aria-label="Edit: correct equations and text, add notes" title="Edit: correct equations and text, add notes"></button>
 <div class="edit-bar" role="toolbar" aria-label="Editing">
-  <button type="button" data-do="fix" title="Correct the selected words: where the conversion got them wrong, or where the original did">Fix text</button>
+  <button type="button" data-do="fix" title="Correct what you selected (words, with the formulas among them): where the conversion got it wrong, or where the original did">Fix text</button>
   <button type="button" data-do="note" title="Add a collapsible note of your own after the paragraph of the selected words">Note</button>
   <button type="button" data-do="warning" title="Add a warning box after the paragraph of the selected words">Warning</button>
   <button type="button" data-do="source" aria-label="See the Markdown of the selection" title="See the Markdown of the selection: how what you selected is written in the file">🔬</button>
@@ -2469,8 +2536,10 @@ function safePath(pathname: string): string | null {
 class EditError extends Error {}
 
 const NOT_IN_FILE =
-  "These words can't be found for sure in the file (formatting or a formula may be in the " +
-  "way, or the same words read differently elsewhere). Select a few plain words, or more of them.";
+  "This selection can't be found for sure in the file (the file may write something in it " +
+  "differently than the page shows it, or have the same words elsewhere in another form). " +
+  "Select a little more or less.";
+const CHANGED = "The file has changed since this page was shown. Reload the page and try again.";
 
 type Span = { start: number; end: number };
 
@@ -2494,12 +2563,15 @@ const codeSpans = (src: string) =>
 /**
  * The source with everything the page doesn't show as text blanked out (formulas, tags,
  * comments, link addresses, footnote definitions), each character replaced so that positions
- * stay the same. The page leaves the same things out when it counts.
+ * stay the same. The page leaves the same things out when it counts. A formula is one
+ * character of the page's text, FORMULA, and so it is here, where the formula begins.
  */
+const FORMULA = "\x01";
+
 function shownText(src: string): string {
   const blank = (m: string) => "\0".repeat(m.length);
   return src
-    .replace(PROTECT, (m, ...groups) => (mathOf(groups) ? blank(m) : m))
+    .replace(PROTECT, (m, ...groups) => (mathOf(groups) ? FORMULA + blank(m.slice(1)) : m))
     .replace(FOOTNOTE_DEF, blank)
     .replace(/<!--[\s\S]*?-->|<\/?[a-zA-Z][^<>]*>|!\[[^\]\n]*\]\([^)\n]*\)|\]\([^)\n]*\)/g, blank);
 }
@@ -2509,17 +2581,62 @@ function locate(src: string, where: any): Span {
   if (where?.math) {
     const span = mathSpans(src)[where.math.i];
     if (!span || src.slice(span.start, span.end).replace(/\r\n/g, "\n") !== where.math.was) {
-      throw new EditError("The file has changed since this page was shown. Reload the page and try again.");
+      throw new EditError(CHANGED);
     }
     return span;
   }
-  const words = typeof where?.text === "string" ? where.text.trim().split(/\s+/).filter(Boolean) : [];
-  if (!words.length) throw new EditError("Select some words first.");
-  const re = new RegExp(words.map((w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "g");
-  const found = [...shownText(src).matchAll(re)];
+  // The selection as the page has it: its words, FORMULA for each formula, and "\0" wherever
+  // one piece of the page's text ends and the next begins. There the file has what makes the
+  // difference: a tag, the marks of emphasis, of a link, of code or of a footnote, and behind
+  // a formula the rest of it with its own marks.
+  const picked = typeof where?.text === "string" ? where.text.replace(/^[\s\0]+|[\s\0]+$/g, "") : "";
+  if (!picked) throw new EditError("Select something first.");
+  if (picked.length > 5000) throw new EditError("That is too much to find in the file. Select less.");
+  const GAP = String.raw`(?:\[\^[^\]\s]+\]|[\0*_~\[\x60])*`;
+  const parts: string[] = [];
+  for (const piece of picked.split(/(\s+|\0+|\x01)/)) {
+    if (!piece) continue;
+    const part = /^\s/.test(piece) ? "\\s+"
+      : piece[0] === "\0" ? GAP
+      : piece === FORMULA ? "\\x01"
+      : piece.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (part === GAP && parts.at(-1) === GAP) continue;
+    parts.push(part);
+    if (piece === FORMULA) parts.push(GAP);
+  }
+  // (a formula that ends the selection ends it: what stands behind it is not looked at)
+  if (parts.at(-1) === GAP) parts.pop();
+  const shown = shownText(src);
+  const found = [...shown.matchAll(new RegExp(parts.join(""), "g"))];
   const m = found.length === where.count ? found[where.nth] : undefined;
   if (!m) throw new EditError(NOT_IN_FILE);
-  return { start: m.index, end: m.index + m[0].length };
+  let start = m.index;
+  let end = m.index + m[0].length;
+  // A formula at either end is taken whole, with its marks.
+  const formulas = mathSpans(src);
+  const first = shown[start] === FORMULA && formulas.find((f) => f.start === start);
+  if (first) start = formulaUnit(src, first).start;
+  const last = shown[end - 1] === FORMULA && formulas.find((f) => f.start === end - 1);
+  if (last) end = formulaUnit(src, last).end;
+  return { start, end };
+}
+
+/**
+ * A formula in a sentence with the marks that belong to it: pdf2md's of the picture it was
+ * read from (behind it; in a book of the older form in front of it) and ours of an
+ * improvement. key: the picture's mark, if it has one.
+ */
+const EQ_KEY_BEFORE = /<!-- pdf2md:eq [0-9a-f]+ -->$/;
+
+function formulaUnit(src: string, span: Span): Span & { key?: string } {
+  if (mathMarks(src.slice(span.start, span.end)).display) return span;
+  const behind = src.slice(span.end, span.end + 60).match(EQ_KEY)?.[0];
+  const front = behind ? undefined : src.slice(Math.max(0, span.start - 60), span.start).match(EQ_KEY_BEFORE)?.[0];
+  return {
+    start: span.start - (front?.length ?? 0),
+    end: improvedMark(src, span.end)?.end ?? span.end + (behind?.length ?? 0),
+    key: behind ?? front,
+  };
 }
 
 // 1: the converted text, 2: what else the tag has (data-to="improve"), 3: the words now.
@@ -2530,10 +2647,30 @@ const TO_IMPROVE = ' data-to="improve"';
  * A fix as written in the file. was: the converted text as the attribute has it; rest: what
  * else the tag had before; to: "match" or "improve" as the page chose (neither: as it was).
  */
-function fixSpan(was: string, rest: string, now: string, to: unknown): string {
+function fixSpan(was: string, rest: string, now: string, to: unknown, style?: string): string {
+  return `<span class="fix" data-was="${was}"${fixRest(rest, to, style)}>${now}</span>`;
+}
+
+/**
+ * What the tag of a fix has behind data-was. style: the CSS the reader gave the tag ("" for
+ * none; not given: as it was). Whatever else the tag has, written into the file by hand, stays.
+ */
+const STYLE_ATTR = /\s+style="([^"]*)"/;
+
+function fixRest(rest: string, to: unknown, style?: string): string {
   const improve = to === "improve" || (to !== "match" && rest.includes(TO_IMPROVE));
-  const others = rest.replace(/\s+data-to="[^"]*"/g, "");
-  return `<span class="fix" data-was="${was}"${improve ? TO_IMPROVE : ""}${others}>${now}</span>`;
+  let others = rest.replace(/\s+data-to="[^"]*"/g, "");
+  if (style !== undefined) {
+    others = others.replace(new RegExp(STYLE_ATTR, "g"), "") + (style ? ` style="${toAttr(style)}"` : "");
+  }
+  return (improve ? TO_IMPROVE : "") + others;
+}
+
+/** The style as the dialog's field has it: CSS, on one line (also taken as style="…", as the tag has it). */
+function styleOf(given: unknown): string | undefined {
+  if (typeof given !== "string") return undefined;
+  const css = given.replace(/\s+/g, " ").trim();
+  return (css.match(/^style\s*=\s*(["'])(.*)\1$/i)?.[2] ?? css).trim();
 }
 // The marks of a formula are kept by their numbers ("&#36;" for "$", "&#96;" for "`"): a
 // program that reads the Markdown would else take the converted formula inside the tag
@@ -2580,7 +2717,8 @@ function editMath(src: string, edit: any, book: boolean): string {
     );
   }
   const marked = markImproved(out, same, edit.to);
-  return book ? keepCorrection(marked, same, old) : marked;
+  const kept = book ? keepCorrection(marked, same, old) : marked;
+  return keyedInFix(kept, mathSpans(kept)[edit.where.math.i]);
 }
 
 // A book converted by pdf2md is converted again whenever pdf2md gets better, and a corrected
@@ -2697,30 +2835,53 @@ function markImproved(src: string, span: Span, to: unknown): string {
 /** The fix the page clicked: the one of that number in the file, if it still keeps the same converted text. */
 function fixOf(src: string, where: any): RegExpMatchArray {
   const m = [...src.matchAll(FIX_SPAN)][where?.fix];
-  if (!m || fromAttr(m[1]) !== where?.was) {
-    throw new EditError("The file has changed since this page was shown. Reload the page and try again.");
-  }
+  if (!m || fromAttr(m[1]) !== where?.was) throw new EditError(CHANGED);
   return m;
 }
 
-function editFix(src: string, edit: any): string {
-  if (edit.where?.math) throw new EditError("Click an equation to correct it.");
-  const now = String(edit.now ?? "").trim().replace(/\n\s*\n/g, "\n");
-  if (/<\/span>/i.test(now)) throw new EditError("A fix can't contain </span>.");
-  // A fix that was clicked: its words are changed, or it is undone if they are the
-  // converted ones again.
-  if (typeof edit.where?.fix === "number") {
-    const m = fixOf(src, edit.where);
-    const original = fromAttr(m[1]);
-    const squash = (s: string) => s.replace(/\s+/g, " ");
-    const next = squash(now) === squash(original) ? original : fixSpan(m[1], m[2], now, edit.to);
-    return src.slice(0, m.index) + next + src.slice(m.index! + m[0].length);
+// A fix is of whatever was selected in one paragraph: words, with the formulas of the sentence
+// and its formatting between them, as the file writes them. The dialog shows that Markdown
+// under the tag the fix opens with, and what is typed there is written as it is typed:
+// Markdown, formulas, HTML. Two things a fix can't hold: a displayed equation (it is corrected
+// by clicking it), and a part of something that has to stay whole (a tag without its closing
+// tag, half of a link).
+
+/** Everything of `text` that is code, a formula or a comment blanked out: what is left are its words and its tags. */
+const wordsAndTags = (text: string) =>
+  text.replace(PROTECT, (m) => (m.startsWith("<span") || m === "\\$" ? m : "\0".repeat(m.length)));
+
+const VOID_TAGS = new Set(["br", "hr", "img", "wbr", "input", "col", "area", "source", "track", "embed"]);
+
+/** The tag that `text` opens without closing it, or closes without having opened it (none: undefined). */
+function looseTag(text: string): string | undefined {
+  const open: string[] = [];
+  for (const m of wordsAndTags(text).matchAll(/<(\/?)([a-zA-Z][\w-]*)\b[^<>]*?(\/?)>/g)) {
+    const name = m[2].toLowerCase();
+    if (VOID_TAGS.has(name) || m[3]) continue;
+    if (!m[1]) open.push(name);
+    else if (open.pop() !== name) return m[0];
   }
-  const { start, end } = locate(src, edit.where);
+  return open.length ? `<${open.at(-1)}>` : undefined;
+}
+
+/** The fix to change (clicked, or all of its words selected), or the place in the file to make one of. */
+function fixTarget(src: string, where: any): { old?: RegExpMatchArray; start: number; end: number } {
+  if (where?.math) throw new EditError("Click an equation to correct it.");
+  if (typeof where?.fix === "number") {
+    const old = fixOf(src, where);
+    return { old, start: old.index!, end: old.index! + old[0].length };
+  }
+  const { start, end } = locate(src, where);
   const was = src.slice(start, end);
   if (/\n[ \t]*\r?\n/.test(was)) throw new EditError("A fix has to stay inside one paragraph.");
-  if (codeSpans(src).some((c) => start < c.end && end > c.start)) {
-    throw new EditError("Words inside code can't be marked as a fix.");
+  for (const m of src.matchAll(PROTECT)) {
+    if (m.index >= end) break;
+    if (m.index + m[0].length <= start) continue;
+    const math = mathOf(m.slice(1));
+    if (math && mathMarks(math).display) {
+      throw new EditError("A displayed equation can't be part of a fix. Click it to correct it.");
+    }
+    if (!math && /^(?:`|~~~)/.test(m[0])) throw new EditError("Words inside code can't be marked as a fix.");
   }
   // An earlier fix: its words are changed, or it is undone if they are the converted ones again.
   for (const m of src.matchAll(FIX_SPAN)) {
@@ -2728,15 +2889,146 @@ function editFix(src: string, edit: any): string {
     if (end <= m.index || start >= spanEnd) continue;
     const textEnd = spanEnd - "</span>".length;
     if (start !== textEnd - m[3].length || end !== textEnd) {
-      throw new EditError("These words are part of a fix made earlier. Click that fix to change it.");
+      throw new EditError(
+        "A part of this is a fix made earlier. Click that fix to change it, or select all of its words and no others.",
+      );
     }
-    const original = fromAttr(m[1]);
-    const squash = (s: string) => s.replace(/\s+/g, " ");
-    const next = squash(now) === squash(original) ? original : fixSpan(m[1], m[2], now, edit.to);
-    return src.slice(0, m.index) + next + src.slice(spanEnd);
+    return { old: m, start: m.index, end: spanEnd };
   }
-  if (now === was) return src;
-  return src.slice(0, start) + fixSpan(toAttr(was), "", now, edit.to) + src.slice(end);
+  return wholeMarks(src, start, end);
+}
+
+/**
+ * The place of a fix with the marks that belong to what it holds. The page can't say whether
+ * a selection that begins with the first word of a link, of bold words or of a tag's words
+ * begins before the mark that opens them or behind it. It is behind it if the selection
+ * stays within those words; if it goes on beyond them, the marks are taken in at both ends,
+ * so that what the fix holds is whole. What still begins or ends inside one is refused.
+ */
+function wholeMarks(src: string, start: number, end: number): Span {
+  const text = wordsAndTags(src);
+  for (let n = 0; n < 8; n++) {
+    const was = text.slice(start, end);
+    const before = text.slice(Math.max(0, start - 300), start);
+    const after = text.slice(end, end + 300);
+    const loose = looseTag(was);
+    if (loose) {
+      // (not the tags of another fix, which would be a fix inside a fix)
+      const opening = loose.startsWith("</") && before.match(/<[a-zA-Z][^<>]*>$/)?.[0];
+      const closing = !loose.startsWith("</") && after.match(/^<\/[a-zA-Z][^<>]*>/)?.[0];
+      if (opening && !opening.startsWith('<span class="fix"')) start -= opening.length;
+      else if (closing && looseTag(was + closing) === undefined) end += closing.length;
+      else {
+        throw new EditError(`The selection begins or ends inside what ${loose} holds. Select all of that, or none of it.`);
+      }
+      continue;
+    }
+    // a link: [its words](its address)
+    let moved = false;
+    for (const m of text.matchAll(/\[([^\]\n]*)\]\([^)\n]*\)/g)) {
+      const textStart = m.index + 1;
+      const textEnd = textStart + m[1].length;
+      const linkEnd = m.index + m[0].length;
+      if (start >= linkEnd || end <= m.index) continue;
+      if ((start >= textStart && end <= textEnd) || (start <= m.index && end >= linkEnd)) continue;
+      if (start === textStart && end > textEnd) start = m.index;
+      else if (end === textEnd && start < m.index) end = linkEnd;
+      else throw new EditError("The selection begins or ends inside a link. Select all of the link, or only words of it.");
+      moved = true;
+    }
+    if (moved) continue;
+    // emphasis: an odd number of its marks, and the one that pairs with it right outside
+    // (a single * or _ may be just that, so only the double ones are held to be pairs)
+    const marks = was.replace(/\\[*_~]/g, "");
+    const odd = ["**", "~~", "*", "_"].find((mark) => {
+      const rest = mark === "*" ? marks.split("**").join("") : marks;
+      return (rest.split(mark).length - 1) % 2 === 1 && (mark.length > 1 || after.startsWith(mark) || before.endsWith(mark));
+    });
+    if (!odd) return { start, end };
+    if (after.startsWith(odd)) end += odd.length;
+    else if (before.endsWith(odd)) start -= odd.length;
+    else {
+      throw new EditError(`The selection begins or ends inside words set in ${odd} … ${odd}. Select all of them, or only words of them.`);
+    }
+  }
+  throw new EditError(NOT_IN_FILE);
+}
+
+// A formula read from a picture is corrected per picture: pdf2md converts it corrected from
+// then on, and with the mark of an improvement if it has one. So the converted text a fix
+// keeps has such a formula as the fix has it. (pdf2md looks for the converted text in the
+// paragraph it converts; with the formula as it was read, the fix would find no place.)
+const keyedFormulas = (text: string) =>
+  mathSpans(text).map((f) => formulaUnit(text, f)).filter((u) => u.key);
+
+function rekey(was: string, now: string): string {
+  const mine = keyedFormulas(now);
+  if ((now.match(/<!-- pdf2md:eq [0-9a-f]+ -->/g) ?? []).length !== mine.length) {
+    throw new EditError(
+      "<!-- pdf2md:eq … --> says which picture a formula was read from. It has to stay right behind its formula, or go with it.",
+    );
+  }
+  let out = was;
+  for (const u of keyedFormulas(was).reverse()) {
+    const same = mine.find((n) => n.key === u.key);
+    if (same) out = out.slice(0, u.start) + now.slice(same.start, same.end) + out.slice(u.end);
+  }
+  return out;
+}
+
+/** What the dialog of a fix shows: the Markdown to change, and the tag as the file has it or will have it. */
+function peekFix(src: string, edit: any) {
+  const { old, start, end } = fixTarget(src, edit.where);
+  if (!old) {
+    const now = src.slice(start, end).replace(/\r\n/g, "\n");
+    return { old: false, now, was: now, attr: toAttr(now), rest: "", style: "", to: "match" };
+  }
+  return {
+    old: true,
+    now: old[3].replace(/\r\n/g, "\n"),
+    was: fromAttr(old[1]),
+    attr: old[1],
+    rest: fixRest(old[2], "match", ""),
+    style: fromAttr(old[2].match(STYLE_ATTR)?.[1] ?? ""),
+    to: old[2].includes(TO_IMPROVE) ? "improve" : "match",
+  };
+}
+
+function editFix(src: string, edit: any): string {
+  const { old, start, end } = fixTarget(src, edit.where);
+  const had = old ? old[3] : src.slice(start, end);
+  if (typeof edit.source === "string" && edit.source !== had.replace(/\r\n/g, "\n")) throw new EditError(CHANGED);
+  const now = String(edit.now ?? "").trim().replace(/\n\s*\n/g, "\n");
+  if (/<\/span>/i.test(now)) throw new EditError("A fix can't contain </span>.");
+  const loose = looseTag(now);
+  if (loose) throw new EditError(`${loose} is not closed in the fix, or is closed without being opened in it.`);
+  const converted = old ? fromAttr(old[1]) : had;
+  const original = rekey(converted, now);
+  const rest = fixRest(old?.[2] ?? "", edit.to, styleOf(edit.style));
+  // The converted words again, and no style: no fix (an earlier one is undone).
+  const squash = (s: string) => s.replace(/\s+/g, " ");
+  const plain = (old ? squash(now) === squash(original) : now === original) && !STYLE_ATTR.test(rest);
+  const attr = old && original === converted ? old[1] : toAttr(original);
+  const next = plain ? original : `<span class="fix" data-was="${attr}"${rest}>${now}</span>`;
+  return src.slice(0, start) + next + src.slice(end);
+}
+
+/**
+ * After a formula read from a picture was corrected by clicking it: the fix it stands in, if
+ * any, keeps the converted text with the formula as it is now (see rekey).
+ */
+function keyedInFix(src: string, span: Span | undefined): string {
+  if (!span || !formulaUnit(src, span).key) return src;
+  for (const m of src.matchAll(FIX_SPAN)) {
+    const end = m.index + m[0].length;
+    if (m.index >= span.start || span.end > end) continue;
+    const converted = fromAttr(m[1]);
+    const original = rekey(converted, m[3]);
+    if (original === converted) return src;
+    const next = original === m[3] && !STYLE_ATTR.test(m[2]) ? original : fixSpan(toAttr(original), m[2], m[3], undefined);
+    return src.slice(0, m.index) + next + src.slice(end);
+  }
+  return src;
 }
 
 /** The next free N for id="mine-N", looking at every Markdown file of the folder (book.md holds them all). */
@@ -2888,9 +3180,7 @@ function peekNote(src: string, edit: any) {
 function editOldNote(src: string, edit: any): string {
   const note = findNote(src, edit.where);
   const { span, spans } = note;
-  if (note.was !== edit.where.note.was) {
-    throw new EditError("The file has changed since this page was shown. Reload the page and try again.");
-  }
+  if (note.was !== edit.where.note.was) throw new EditError(CHANGED);
   if (edit.remove) {
     // Its empty lines go with it, and so does the ✎ marker that led to it.
     const before = src.slice(0, span.start).replace(/(\r?\n[ \t]*)+$/, "");
@@ -3365,7 +3655,7 @@ const server = Bun.serve({
         // Not a change: the Markdown of a note or of the selection, for the page to show.
         if (edit.op === "peek") return Response.json(peekNote(await Bun.file(file).text(), edit));
         if (edit.op === "source") return Response.json(peekSource(await Bun.file(file).text(), edit));
-        if (edit.op === "fixsource") return Response.json({ now: fixOf(await Bun.file(file).text(), edit.where)[3] });
+        if (edit.op === "fixsource") return Response.json(peekFix(await Bun.file(file).text(), edit));
         if (edit.op === "editor") return Response.json(await openEditor(file, await Bun.file(file).text(), edit));
         await saveEdit(file, edit);
         return Response.json({ ok: true });
