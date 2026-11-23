@@ -200,6 +200,8 @@ mdBun knows how these are told a line and a column: VS Code and its relatives (`
 
 With no editor named, mdBun uses `$VISUAL` or `$EDITOR`, as they were when the server started. An editor that runs in a terminal is opened in a terminal window: `$TERMINAL`, your desktop's own, or the first one found.
 
+**In Termux the editor may be an Android app**, named by its package: `md --editor com.adeeteya.markdown_editor` (or `package/.Activity` for one screen of an app). Android is asked to show the file in that app, as `termux-open` asks for any app. Two things differ from an editor on a computer. An app cannot be told a line, so the file opens at its start. And the app is let read the file, not write it: what you change there reaches the file only if the app can save over it by its own means, with "Save as" onto a file in shared storage for instance. An editor that runs in Termux (`nvim`, `micro`) has neither limit; for those mdBun shows the command to paste.
+
 **When mdBun cannot start the editor**, it shows the command that would, with a **Copy** button, for you to paste into a terminal. That happens when no editor is named, when the editor is not installed where the server looks, when it fails to start, and when it needs a terminal and there is none to open, as in Termux.
 
 The editor is always the one named on your computer, never one named by a page: a Markdown file can hold a script, and a page must not be able to choose what is run. The setting is kept in `~/.config/mdBun/editor`.

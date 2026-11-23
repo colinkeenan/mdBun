@@ -2905,6 +2905,10 @@ function peekSource(src: string, edit: any) {
 // An editor that runs in a terminal is started in a terminal's window. Where the command
 // can't be run (no editor set, no terminal to be found, as in Termux, or it fails), the page
 // gets the command to show, to be pasted into a terminal.
+//
+// In Termux the editor may be an Android app, named by its package (com.example.editor, or
+// com.example.editor/.Activity): Android is asked to show the file in it, as termux-open asks
+// for any app. An app can't be told a line, so the file opens as the app opens files.
 const AT_COLONS = ["{file}:{line}:{column}"];
 const AT_GOTO = ["--goto", "{file}:{line}:{column}"];
 const AT_PLUS = ["+{line}:{column}", "{file}"];
@@ -3019,6 +3023,50 @@ async function launch(argv: string[], cwd: string): Promise<string | null> {
   });
 }
 
+const ON_ANDROID = !!process.env.TERMUX_VERSION;
+const ANDROID_APP = /^[A-Za-z]\w*(?:\.[A-Za-z_]\w*)+(?:\/[\w.$]+)?$/;
+
+/** A program run to its end (a few seconds at most): what it printed, and how it ended. */
+async function runToEnd(argv: string[]): Promise<{ ok: boolean; said: string }> {
+  try {
+    const child = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const late = setTimeout(() => child.kill(), 8000);
+    const [out, err, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    clearTimeout(late);
+    return { ok: code === 0, said: (out + "\n" + err).trim() };
+  } catch (err) {
+    return { ok: false, said: (err as Error).message };
+  }
+}
+
+/**
+ * The file shown in an Android app, from Termux. The app gets the file as termux-open would
+ * give it: by an address of Termux's own (content://com.termux.files/…) that it is let read.
+ * `am` says "Error: …" where Android finds nothing in the app to show such a file; an app
+ * that takes plain text only is asked once more with that.
+ */
+async function openInApp(app: string, file: string) {
+  const user = /^(?:0|[1-9]\d*)$/.test(process.env.TERMUX__USER_ID ?? "") ? process.env.TERMUX__USER_ID! : "0";
+  const uri = "content://com.termux.files" + file.split(sep).map(encodeURIComponent).join("/");
+  const command = (type: string) => [
+    "am", "start", "--user", user, "-a", "android.intent.action.VIEW", "-d", uri, "-t", type,
+    "--grant-read-uri-permission", ...(app.includes("/") ? ["-n", app] : ["-p", app]),
+  ];
+  let failed = "";
+  for (const type of ["text/markdown", "text/plain"]) {
+    const { ok, said } = await runToEnd(command(type));
+    const error = said.split("\n").map((l) => l.trim()).find((l) => /\bError\b|Exception/.test(l));
+    if (ok && !error) return null;
+    failed = error || said.split("\n").pop() || "am didn't say why";
+    if (!/unable to resolve/i.test(failed)) break;
+  }
+  return { failed, command: command("text/markdown").map(shellQuote).join(" ") };
+}
+
 /** A terminal to run a program in: $TERMINAL, the desktop's own, or the first one found. */
 function terminalCommand(): string[] | null {
   if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return null;
@@ -3061,6 +3109,18 @@ async function openEditor(file: string, src: string, edit: any) {
   }
   const words = shellWords(setting.command);
   if (!words.length) throw new EditError("The editor's setting is empty.");
+  if (ON_ANDROID && words.length === 1 && ANDROID_APP.test(words[0]) && !Bun.which(words[0])) {
+    const app = await openInApp(words[0], file);
+    if (app) {
+      return {
+        ran: false,
+        why: `${words[0]} couldn't be started: ${app.failed}\nThis is what was asked of Android, to try in Termux:`,
+        command: app.command,
+      };
+    }
+    console.log(`Opened ${file} in ${words[0]}`);
+    return { ran: true, editor: words[0], line: null };
+  }
   // The editor among the words (a terminal may be named before it: "konsole -e nvim").
   const known = words.findIndex((w) => EDITORS[basename(w)]);
   const editor = known >= 0 ? EDITORS[basename(words[known])] : undefined;
