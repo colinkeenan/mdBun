@@ -162,6 +162,13 @@ The ✏️ button turns editing on for the tab and shows a bar of buttons. Every
 * **Editor**: opens the file in [your own editor](#your-editor), at what you selected.
 * **Equations to check** opens `check-equations.md` if the folder has one.
 
+**A corrected equation in a book from pdf2md** is written so that pdf2md keeps it when it converts the book again:
+
+* One that pdf2md read from a picture is corrected where it stands. pdf2md knows it by its picture.
+* One that pdf2md built from the PDF's text has no picture. A displayed equation gets a mark above it that holds the equation as converted, `<!-- pdf2md:fix … -->`. A formula in a sentence is wrapped as a fix, like corrected words, together with a few of the words around it if the same formula stands earlier in the line.
+
+Correct it back to what was converted, and the mark or the fix is gone again. pdf2md corrects every displayed equation of the chapter that it converts to the same LaTeX, so a mistake the conversion makes several times needs correcting once. One case is not kept: a displayed equation built from text in a book written in the standard form (`$$`), for which pdf2md has no mark. In a folder that pdf2md did not write, an equation is simply corrected where it stands.
+
 Notes and warnings are Markdown and can hold math. To change or remove one, click it while editing. **Delete** has to be pressed twice, since what you wrote is gone for good.
 
 Two limits:

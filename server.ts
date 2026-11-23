@@ -1895,6 +1895,9 @@ const PROTECT = new RegExp(
     // the tag a fix opens with: the converted text it keeps may hold a formula, which is
     // not one of the page's (kept as is; no group, so the numbers below stay)
     '<span class="fix" data-was="[^"]*"[^>]*>',
+    // a comment: what it holds is no formula of the page either (the mark above a corrected
+    // equation keeps the equation as converted)
+    "<!--[\\s\\S]*?-->",
     // (also set in, as inside a list item: the fence and each line of the TeX
     // stand under the item's words)
     "(?<=^[ \\t]*)(```math[ \\t]*\\n[\\s\\S]*?^[ \\t]*```)[ \\t]*$", // 1: display math, fenced
@@ -2455,7 +2458,8 @@ function safePath(pathname: string): string | null {
 
 // Editing: the changes the page's ✏️ tools ask for (see EDIT_HEAD), made in the Markdown
 // file. What is written is what pdf2md keeps when it converts a book again:
-//   an equation corrected where it stands;
+//   an equation corrected where it stands (one that pdf2md built from the PDF's text: under
+//     a mark of pdf2md's, or as a fix; see keepCorrection);
 //   <span class="fix" data-was="as converted">as in the book</span>;
 //   the same with data-to="improve", and an equation with <!-- mdBun:improved --> behind it,
 //     where the change is not to match the original but to improve on it;
@@ -2541,7 +2545,7 @@ const fromAttr = (s: string) =>
   s.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
     .replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
-function editMath(src: string, edit: any): string {
+function editMath(src: string, edit: any, book: boolean): string {
   const { start, end } = locate(src, { math: edit.where?.math ?? {} });
   const old = src.slice(start, end);
   const { display, open, close } = mathMarks(old);
@@ -2575,7 +2579,99 @@ function editMath(src: string, edit: any): string {
             : "This can't be saved as one formula: it must stay on one line, without a $ that isn't written \\$.",
     );
   }
-  return markImproved(out, same, edit.to);
+  const marked = markImproved(out, same, edit.to);
+  return book ? keepCorrection(marked, same, old) : marked;
+}
+
+// A book converted by pdf2md is converted again whenever pdf2md gets better, and a corrected
+// formula is kept then only if pdf2md can tell it was corrected. One read from a picture it
+// knows by the picture (<!-- pdf2md:eq KEY -->): that one is corrected where it stands. One
+// built from the PDF's text has nothing of the kind, so the correction is written the way
+// pdf2md keeps it:
+//   a displayed equation under a mark that holds its LaTeX as converted,
+//     <!-- pdf2md:fix AS CONVERTED -->, an empty line, the corrected block
+//     (pdf2md corrects every equation of the chapter that is converted to that LaTeX again);
+//   a formula in a sentence as a fix, <span class="fix" data-was="AS CONVERTED">…</span>,
+//     with as many of the words before it as it takes to be the first such text of its line
+//     (pdf2md puts a fix back at the first place its converted text stands in the paragraph).
+// Corrected back to what was converted, either is as it was again, without mark or fix.
+const FIX_MARK = "<!-- pdf2md:fix ";
+// (a comment can't hold two hyphens in a row; "$" and "`" would read as a formula's)
+const toMark = (s: string) => s.replace(/--/g, "-&#45;").replace(/\$/g, "&#36;").replace(/`/g, "&#96;");
+const PLAIN_WORD = /^[\p{L}\p{N}.,;:!?'’"“”()=+\-–—]+$/u;
+
+/** Is the folder a book that pdf2md wrote? */
+async function convertedBook(dir: string): Promise<boolean> {
+  const names = new Set(await readdir(dir).catch(() => [] as string[]));
+  if (!names.has(BOOK_FILE)) return false;
+  if (["book.pdf", ".pdf2md-written", ".pdf2md-course"].some((n) => names.has(n))) return true;
+  return (await Bun.file(join(dir, BOOK_FILE)).slice(0, 512).text().catch(() => "")).includes("<!-- pdf2md:");
+}
+
+/** The corrected formula at `span` (`old`: as it was), written so that pdf2md keeps it. */
+function keepCorrection(src: string, span: Span, old: string): string {
+  const math = src.slice(span.start, span.end);
+  // a note of the reader's own is kept whole, with what it holds
+  if (noteSpans(src, "mine").some((n) => n.start < span.start && span.end <= n.end)) return src;
+  const line = src.lastIndexOf("\n", span.start - 1) + 1;
+
+  if (mathMarks(math).display) {
+    // (pdf2md has the mark for a fenced block only)
+    if (!math.startsWith("```")) return src;
+    const indent = src.slice(line, span.start);
+    const above = src.slice(0, line);
+    if (/<!-- pdf2md:eq [0-9a-f]+ -->[ \t]*\n(?:[ \t]*\n)?$/.test(above)) return src;
+    // what stands between the fences, as at the margin (in a list item all of it is set in)
+    const margin = (s: string) => s.split("\n").map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join("\n");
+    const body = (m: string) => margin(m.slice(mathMarks(m).open, m.length - mathMarks(m).close));
+    const at = above.lastIndexOf(FIX_MARK);
+    const markLine = above.lastIndexOf("\n", at - 1) + 1;
+    // (the mark right above the block: nothing but an empty line between its end and the fence)
+    const close = at < 0 ? -1 : above.indexOf(" -->", at);
+    if (close >= 0 && above.slice(markLine, at) === indent && /^\n[ \t]*\n$/.test(above.slice(close + 4))) {
+      const kept = fromAttr(margin(above.slice(at + FIX_MARK.length, close)));
+      return body(math) === kept ? src.slice(0, markLine) + src.slice(line) : src;
+    }
+    const was = body(old);
+    if (was === body(math)) return src;
+    return above + indent + FIX_MARK + toMark(was).split("\n").join("\n" + indent) + " -->\n\n" + src.slice(line);
+  }
+
+  if (math === old) return src;
+  if (EQ_KEY.test(src.slice(span.end)) || /<!-- pdf2md:eq [0-9a-f]+ -->$/.test(src.slice(0, span.start))) return src;
+  // (a quote, an alert box: the reader's own too)
+  if (QUOTE_LINE.test(src.slice(line, span.start))) return src;
+  // In a fix already: that keeps it. Undone, if its words are the converted ones again.
+  for (const m of src.matchAll(FIX_SPAN)) {
+    const end = m.index + m[0].length;
+    if (m.index < span.start && span.end < end) {
+      return m[3] === fromAttr(m[1]) ? src.slice(0, m.index) + m[3] + src.slice(end) : src;
+    }
+  }
+  // The fix: the formula with the mark of an improvement behind it, and the words around it
+  // that make its converted text the first of its kind in the line as converted.
+  let start = span.start;
+  let end = span.end + (src.slice(span.end).startsWith(IMPROVED) ? IMPROVED.length : 0);
+  const after = end;
+  const lineEnd = (src.indexOf("\n", end) + 1 || src.length + 1) - 1;
+  const first = line + src.slice(line, span.start).match(/^[ \t]*(?:(?:[-+*>|]|\d+[.)]|#{1,6})[ \t]+)*/)![0].length;
+  const converted = (src.slice(line, span.start) + "\0" + old + src.slice(after, lineEnd))
+    .replace(FIX_SPAN, (_, was: string) => fromAttr(was));
+  const here = converted.indexOf("\0");
+  const text = converted.replace("\0", "");
+  const was = () => src.slice(start, span.start) + old + src.slice(after, end);
+  const isFirst = () => text.indexOf(was()) === here - (span.start - start);
+  for (let n = 0; n < 12 && !isFirst(); n++) {
+    const word = src.slice(first, start).match(/(\S+)\s*$/);
+    if (!word || !PLAIN_WORD.test(word[1])) break;
+    start -= word[0].length;
+  }
+  for (let n = 0; n < 12 && !isFirst(); n++) {
+    const word = src.slice(end, lineEnd).match(/^\s*(\S+)/);
+    if (!word || !PLAIN_WORD.test(word[1])) break;
+    end += word[0].length;
+  }
+  return src.slice(0, start) + fixSpan(toAttr(was()), "", src.slice(start, end), "match") + src.slice(end);
 }
 
 /** The formula at `span` with or without the mark of an improvement behind it, as the page chose. */
@@ -3165,7 +3261,7 @@ function saveEdit(file: string, edit: any): Promise<void> {
   const run = editQueue.then(async () => {
     const src = await Bun.file(file).text();
     const out =
-      edit.op === "math" ? editMath(src, edit)
+      edit.op === "math" ? editMath(src, edit, await convertedBook(dirname(file)))
       : edit.op === "fix" ? editFix(src, edit)
       : edit.op === "note" ? await editNote(src, edit, file)
       : edit.op === "renote" ? editOldNote(src, edit)
