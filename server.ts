@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { watch } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
@@ -155,6 +156,11 @@ const CSS = `
   :root[data-edit] .math[data-i]:hover { outline: 1px dashed var(--a-note); outline-offset: 2px;
                                          border-radius: 3px; }
   :root[data-edit] span.fix[data-was] { text-decoration: underline dotted var(--a-tip); }
+  :root[data-edit] span.fix[data-to="improve"] { text-decoration-color: var(--a-important); }
+  /* What was changed to improve on the original, not to match it, has a colour of its own
+     (an equation's number is the book's still, and keeps the colour of the text). */
+  span.fix[data-to="improve"], .math.inline.improved, .math.display.improved:not(.numbered),
+  .math.display.improved > .eq-body, .edit-preview.improved { color: var(--a-important); }
   :root[data-edit] details.mine, :root[data-edit] .alert { cursor: pointer; }
   :root[data-edit] details.mine:hover, :root[data-edit] .alert:hover {
     outline: 1px dashed var(--a-note); outline-offset: 2px; }
@@ -168,8 +174,13 @@ const CSS = `
                  padding: 0.3rem 0.5rem; margin: 0.3rem 0 0.6rem; }
   .edit-dialog textarea[name="tex"] { font-family: ui-monospace, monospace; font-size: 0.9rem; }
   .edit-dialog label { display: block; }
-  .edit-dialog input[type="checkbox"] { margin-right: 0.4rem; }
-  .edit-was { margin: 0 0 0.4rem; color: #888; overflow-wrap: anywhere; }
+  .edit-dialog input[type="checkbox"], .edit-dialog input[type="radio"] { margin-right: 0.4rem; }
+  .edit-why { border: 0; padding: 0; margin: 0.2rem 0 0; }
+  .edit-why legend { padding: 0; color: #888; }
+  .edit-why span { color: #888; }
+  .edit-command { margin: 0.4rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem;
+                  user-select: all; }
+  .edit-was { margin: 0 0 0.4rem; color: #888; overflow-wrap: anywhere; white-space: pre-line; }
   .edit-preview { overflow-x: auto; min-height: 2rem; padding: 0.3rem 0; }
   .edit-error { margin: 0.4rem 0; overflow-wrap: anywhere; }
   .edit-error:empty { display: none; }
@@ -1213,7 +1224,11 @@ const browseDialog = (dir: string) => `<button class="browse-toggle" type="butto
 //  - "Note" and "Warning" add <details class="mine"> or > [!WARNING] after the paragraph of
 //    the selected words (or after an equation, from its dialog), with an optional ✎ marker;
 //  - clicking one of those notes, or any alert box, opens its Markdown to change or delete it;
-//  - 🔬 shows the Markdown of whatever is selected (words, formatting, formulas), unchanged.
+//  - 🔬 shows the Markdown of whatever is selected (words, formatting, formulas), unchanged;
+//  - "Editor" opens the file in the reader's own editor at the selection (see openEditor).
+// A fix and a corrected equation are either to match the original (the conversion got it
+// wrong: the usual case, written as it always was) or to improve on it (the book is changed:
+// marked so in the file, and shown in a colour of its own). The dialog asks which.
 // These are the marks pdf2md keeps when it converts a book again. The page only says what to
 // change and where; the server (saveEdit below) finds the place in the file and writes it,
 // and live reload then shows the result.
@@ -1234,6 +1249,12 @@ const EDIT_HEAD = String.raw`
       const HINT = "Select words, or click an equation or a note.";
       const NOT_FOUND = "These words aren't in the page's text as selected. Select a few plain words.";
       const texOf = new WeakMap(); // each formula's TeX, before KaTeX replaces it
+      // What a change is for. The first is how fixes have always been written.
+      const WHY =
+        '<fieldset class="edit-why"><legend>This change is</legend>' +
+        '<label><input type="radio" name="to" value="match">to match the original <span>(the conversion got it wrong)</span></label>' +
+        '<label><input type="radio" name="to" value="improve">to improve the original <span>(the book is changed: shown in colour)</span></label>' +
+        '</fieldset>';
 
       // The selection: { text, nth, count }, see above.
       // The page's text as the file has it, and where the range starts and ends in it.
@@ -1298,6 +1319,11 @@ const EDIT_HEAD = String.raw`
 
       document.addEventListener("DOMContentLoaded", () => {
         for (const el of document.querySelectorAll(".math[data-i]")) texOf.set(el, el.textContent);
+        // What is in the colour of an improvement says so, and what the original has.
+        for (const el of document.querySelectorAll(".math.improved")) el.title = "Changed to improve the original";
+        for (const el of document.querySelectorAll('span.fix[data-to="improve"]')) {
+          el.title = "Changed to improve the original, which has: " + el.dataset.was;
+        }
         const toggle = document.querySelector(".edit-toggle");
         const bar = document.querySelector(".edit-bar");
         const dialog = document.querySelector("dialog.edit-dialog");
@@ -1385,22 +1411,26 @@ const EDIT_HEAD = String.raw`
           const display = el.classList.contains("display");
           const tex = src.slice(Number(el.dataset.open), src.length - Number(el.dataset.close)).trim();
           const where = { math: { i: Number(el.dataset.i), was: src } };
+          const was = el.classList.contains("improved") ? "improve" : "match";
           const form = ask("Correct this equation",
             '<textarea name="tex" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="The equation in TeX"></textarea>' +
-            '<div class="edit-preview"></div>',
+            '<div class="edit-preview"></div>' + WHY,
             '<button type="button" data-then="note">Note after it…</button>' +
             '<button type="button" data-then="warning">Warning after it…</button>',
             (f) => {
               const now = f.elements.tex.value.trim();
               if (!now) throw new Error("The equation can't be empty.");
-              return now === tex ? null : { op: "math", where, now };
+              const to = f.elements.to.value;
+              return now === tex && to === was ? null : { op: "math", where, now, to };
             });
           const area = form.elements.tex;
           const preview = form.querySelector(".edit-preview");
           const error = form.querySelector(".edit-error");
           area.value = tex;
           area.rows = Math.min(16, Math.max(3, tex.split("\n").length + 1));
+          form.elements.to.value = was;
           function show() {
+            preview.classList.toggle("improved", form.elements.to.value === "improve");
             if (!window.katex) return;
             error.textContent = "";
             try {
@@ -1411,23 +1441,35 @@ const EDIT_HEAD = String.raw`
             }
           }
           area.addEventListener("input", show);
+          form.addEventListener("change", show);
           show();
           for (const b of form.querySelectorAll("[data-then]")) {
             b.addEventListener("click", () => { dialog.close(); openNote(b.dataset.then, where, display ? "" : "the formula"); });
           }
         }
 
-        // was: what an earlier fix replaced, when that fix is being changed.
-        function openFix(where, text, was) {
-          const form = ask("Fix the converted text",
+        // was: what an earlier fix replaced, when that fix is being changed, and to: what
+        // that fix was for.
+        function openFix(where, text, was, to) {
+          to = to || "match";
+          const form = ask("Fix the text",
             '<p class="edit-was"></p>' +
-            '<textarea name="now" rows="3" aria-label="The words as in the book"></textarea>',
+            '<textarea name="now" rows="3" aria-label="The words as they should be"></textarea>' + WHY,
             was == null ? "" : '<button type="button" class="edit-undo">Undo this fix</button>',
             (f) => {
               const now = f.elements.now.value.trim();
-              return now === text ? null : { op: "fix", where, now };
+              // (the words as they were, for another reason: an earlier fix only)
+              const same = now === text && (was == null || f.elements.to.value === to);
+              return same ? null : { op: "fix", where, now, to: f.elements.to.value };
             });
-          form.querySelector(".edit-was").textContent = "As converted: " + (was == null ? text : was);
+          form.elements.to.value = to;
+          // What the words were is the conversion's doing, or the original itself.
+          const label = () => {
+            form.querySelector(".edit-was").textContent =
+              (form.elements.to.value === "improve" ? "The original has: " : "As converted: ") + (was == null ? text : was);
+          };
+          form.addEventListener("change", label);
+          label();
           form.elements.now.value = text;
           form.elements.now.select();
           const undo = form.querySelector(".edit-undo");
@@ -1507,16 +1549,68 @@ const EDIT_HEAD = String.raw`
           mark.scrollIntoView({ block: "center" });
         }
 
+        // What the window shows, for want of a selection: the first block of text that
+        // begins in it (told as a selection of it would be), or nothing if there is none.
+        function shown() {
+          const top = bar.getBoundingClientRect().bottom;
+          for (const el of document.querySelectorAll("p, li, h1, h2, h3, h4, h5, h6, td, th, pre, summary, .math.display")) {
+            if (el.getBoundingClientRect().top < top || el.closest("dialog, .edit-bar, .find-bar, .footnotes")) continue;
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            try {
+              const where = span(range);
+              return where.head ? { head: where.head } : { first: where.first };
+            } catch { return null; }
+          }
+          return null;
+        }
+
+        // "Editor": the file in your own editor, at the selection. The server starts the
+        // editor; where it can't, it gives the command that would, to paste into a terminal.
+        async function openEditor() {
+          const range = picked();
+          let where, got;
+          try {
+            where = range ? span(range) : shown();
+            got = await send({ op: "editor", where, about: !range });
+          } catch (err) { say(err.message, true); return; }
+          if (got.ran) {
+            say("Opened in " + got.editor + (got.line ? " at line " + got.line + "." : "."));
+            return;
+          }
+          say(HINT);
+          dialog.innerHTML =
+            '<form method="dialog"><h2>Open in your editor</h2><p class="edit-was"></p><pre class="edit-command"></pre>' +
+            '<div class="edit-actions"><span class="edit-gap"></span>' +
+            '<button type="button" class="edit-copy">Copy</button><button>Close</button></div></form>';
+          dialog.querySelector(".edit-was").textContent = got.why;
+          const pre = dialog.querySelector("pre");
+          pre.textContent = got.command;
+          const copy = dialog.querySelector(".edit-copy");
+          copy.addEventListener("click", async () => {
+            try { await navigator.clipboard.writeText(got.command); }
+            catch {
+              // (no clipboard for the page: select it, to be copied by hand)
+              getSelection().selectAllChildren(pre);
+              try { if (!document.execCommand("copy")) throw 0; } catch { copy.textContent = "Selected: copy it"; return; }
+            }
+            copy.textContent = "Copied";
+          });
+          dialog.showModal();
+          copy.focus();
+        }
+
         // Keep the selection when a button of the bar is pressed.
         bar.addEventListener("mousedown", (e) => { if (e.target.closest("button")) e.preventDefault(); });
         bar.addEventListener("click", (e) => {
           const button = e.target.closest("button[data-do]");
           if (!button) return;
           if (button.dataset.do === "source") { openSource(); return; }
+          if (button.dataset.do === "editor") { openEditor(); return; }
           let where;
           try { where = place(picked()); } catch (err) { say(err.message, true); return; }
           say(HINT);
-          if (button.dataset.do === "fix") openFix(where, where.text, null);
+          if (button.dataset.do === "fix") openFix(where, where.text, null, "match");
           else openNote(button.dataset.do, where, "the selected words");
         });
 
@@ -1540,7 +1634,7 @@ const EDIT_HEAD = String.raw`
           // it is not in the page's text, so the words alone would not find it).
           const where = { fix: [...document.querySelectorAll("span.fix[data-was]")].indexOf(fix), was: fix.dataset.was };
           send({ op: "fixsource", where })
-            .then((d) => openFix(where, d.now, fix.dataset.was))
+            .then((d) => openFix(where, d.now, fix.dataset.was, fix.dataset.to === "improve" ? "improve" : "match"))
             .catch(() => say("This fix can only be changed in the file.", true));
         });
       });
@@ -1550,10 +1644,11 @@ const EDIT_HEAD = String.raw`
 /** The edit button, the bar it shows, and the dialog; checklist: link to check-equations.md. */
 const editTools = (checklist: boolean) => `<button class="edit-toggle" type="button" data-live="${LIVE_RELOAD ? 1 : 0}" aria-label="Edit: correct equations and text, add notes" title="Edit: correct equations and text, add notes"></button>
 <div class="edit-bar" role="toolbar" aria-label="Editing">
-  <button type="button" data-do="fix" title="Correct the selected words where the conversion got them wrong">Fix text</button>
+  <button type="button" data-do="fix" title="Correct the selected words: where the conversion got them wrong, or where the original did">Fix text</button>
   <button type="button" data-do="note" title="Add a collapsible note of your own after the paragraph of the selected words">Note</button>
   <button type="button" data-do="warning" title="Add a warning box after the paragraph of the selected words">Warning</button>
   <button type="button" data-do="source" aria-label="See the Markdown of the selection" title="See the Markdown of the selection: how what you selected is written in the file">🔬</button>
+  <button type="button" data-do="editor" title="Open the file in your own editor, at the selection (or at what the window shows)">Editor</button>
   ${checklist ? '<a href="check-equations.md" title="The equations most worth comparing with the book">Equations to check</a>' : ""}
   <span class="edit-msg" aria-live="polite"></span>
 </div>
@@ -1799,7 +1894,7 @@ const PROTECT = new RegExp(
   [
     // the tag a fix opens with: the converted text it keeps may hold a formula, which is
     // not one of the page's (kept as is; no group, so the numbers below stay)
-    '<span class="fix" data-was="[^"]*">',
+    '<span class="fix" data-was="[^"]*"[^>]*>',
     // (also set in, as inside a list item: the fence and each line of the TeX
     // stand under the item's words)
     "(?<=^[ \\t]*)(```math[ \\t]*\\n[\\s\\S]*?^[ \\t]*```)[ \\t]*$", // 1: display math, fenced
@@ -1825,22 +1920,38 @@ function mathMarks(math: string): { display: boolean; open: number; close: numbe
   return { display: false, open: 1, close: 1 };
 }
 
+// A formula changed to improve on the original, not to match it, has this mark behind it: a
+// formula in a sentence right behind it (behind pdf2md's own mark of the formula's picture, if
+// it has one), a displayed one on the line under it.
+const IMPROVED = "<!-- mdBun:improved -->";
+const EQ_KEY = /^<!-- pdf2md:eq [0-9a-f]+ -->/;
+const IMPROVED_AFTER = /^(<!-- pdf2md:eq [0-9a-f]+ -->)?((?:[ \t]*\r?\n[ \t>]*)?<!-- mdBun:improved -->)/;
+
+/** Where that mark is (with the line break before it), for the formula that ends at `end`. */
+function improvedMark(src: string, end: number): { start: number; end: number } | null {
+  const m = src.slice(end, end + 400).match(IMPROVED_AFTER);
+  return m ? { start: end + (m[1]?.length ?? 0), end: end + m[0].length } : null;
+}
+
+type Formula = { math: string; improved: boolean };
+
 function protectMath(src: string) {
-  const stash: string[] = [];
+  const stash: Formula[] = [];
   const text = src.replace(PROTECT, (m, ...groups) => {
     const math = mathOf(groups);
     if (!math) return m;
-    stash.push(math);
+    const at = groups[6] as unknown as number; // where the match is: what follows the six groups
+    stash.push({ math, improved: !!improvedMark(src, at + math.length) });
     return `ZZMATH${stash.length - 1}ZZ`;
   });
   return { text, stash };
 }
 
-function restoreMath(html: string, stash: string[]) {
+function restoreMath(html: string, stash: Formula[]) {
   return html.replace(/ZZMATH(\d+)ZZ/g, (_, i) => {
-    const math = stash[Number(i)];
+    const { math, improved } = stash[Number(i)];
     const { display, open, close } = mathMarks(math);
-    const cls = display ? "math display" : "math inline";
+    const cls = (display ? "math display" : "math inline") + (improved ? " improved" : "");
     // data-i: which formula of the file it is, so the page can ask to correct it;
     // data-open, data-close: how long the marks around the TeX are
     return `<span class="${cls}" data-i="${i}" data-open="${open}" data-close="${close}">${escapeHtml(math)}</span>`;
@@ -2346,6 +2457,8 @@ function safePath(pathname: string): string | null {
 // file. What is written is what pdf2md keeps when it converts a book again:
 //   an equation corrected where it stands;
 //   <span class="fix" data-was="as converted">as in the book</span>;
+//   the same with data-to="improve", and an equation with <!-- mdBun:improved --> behind it,
+//     where the change is not to match the original but to improve on it;
 //   <details class="mine"> … </details> or > [!WARNING] after a block, between empty lines;
 //   <sup>[✎](#mine-N)</sup> in a sentence, with id="mine-N" on its note.
 // A change whose place in the file isn't certain is refused with a message for the reader.
@@ -2405,7 +2518,19 @@ function locate(src: string, where: any): Span {
   return { start: m.index, end: m.index + m[0].length };
 }
 
-const FIX_SPAN = /<span class="fix" data-was="([^"]*)">([\s\S]*?)<\/span>/g;
+// 1: the converted text, 2: what else the tag has (data-to="improve"), 3: the words now.
+const FIX_SPAN = /<span class="fix" data-was="([^"]*)"([^>]*)>([\s\S]*?)<\/span>/g;
+const TO_IMPROVE = ' data-to="improve"';
+
+/**
+ * A fix as written in the file. was: the converted text as the attribute has it; rest: what
+ * else the tag had before; to: "match" or "improve" as the page chose (neither: as it was).
+ */
+function fixSpan(was: string, rest: string, now: string, to: unknown): string {
+  const improve = to === "improve" || (to !== "match" && rest.includes(TO_IMPROVE));
+  const others = rest.replace(/\s+data-to="[^"]*"/g, "");
+  return `<span class="fix" data-was="${was}"${improve ? TO_IMPROVE : ""}${others}>${now}</span>`;
+}
 // The marks of a formula are kept by their numbers ("&#36;" for "$", "&#96;" for "`"): a
 // program that reads the Markdown would else take the converted formula inside the tag
 // for one of the page's. pdf2md writes and reads them the same way.
@@ -2450,7 +2575,24 @@ function editMath(src: string, edit: any): string {
             : "This can't be saved as one formula: it must stay on one line, without a $ that isn't written \\$.",
     );
   }
-  return out;
+  return markImproved(out, same, edit.to);
+}
+
+/** The formula at `span` with or without the mark of an improvement behind it, as the page chose. */
+function markImproved(src: string, span: Span, to: unknown): string {
+  if (to !== "improve" && to !== "match") return src;
+  const mark = improvedMark(src, span.end);
+  if ((to === "improve") === !!mark) return src;
+  if (mark) return src.slice(0, mark.start) + src.slice(mark.end);
+  const at = span.end + (src.slice(span.end).match(EQ_KEY)?.[0].length ?? 0);
+  // A displayed formula that ends its line has the mark on a line of its own, set in like
+  // the formula's last line (in a list item, in a quote).
+  if (mathMarks(src.slice(span.start, span.end)).display && /^[ \t]*(?:\r?\n|$)/.test(src.slice(at))) {
+    const line = src.lastIndexOf("\n", span.end - 1) + 1;
+    const indent = src.slice(line, span.end).match(/^[ \t>]*/)![0];
+    return src.slice(0, at) + "\n" + indent + IMPROVED + src.slice(at);
+  }
+  return src.slice(0, at) + IMPROVED + src.slice(at);
 }
 
 /** The fix the page clicked: the one of that number in the file, if it still keeps the same converted text. */
@@ -2472,7 +2614,7 @@ function editFix(src: string, edit: any): string {
     const m = fixOf(src, edit.where);
     const original = fromAttr(m[1]);
     const squash = (s: string) => s.replace(/\s+/g, " ");
-    const next = squash(now) === squash(original) ? original : `<span class="fix" data-was="${m[1]}">${now}</span>`;
+    const next = squash(now) === squash(original) ? original : fixSpan(m[1], m[2], now, edit.to);
     return src.slice(0, m.index) + next + src.slice(m.index! + m[0].length);
   }
   const { start, end } = locate(src, edit.where);
@@ -2486,16 +2628,16 @@ function editFix(src: string, edit: any): string {
     const spanEnd = m.index + m[0].length;
     if (end <= m.index || start >= spanEnd) continue;
     const textEnd = spanEnd - "</span>".length;
-    if (start !== textEnd - m[2].length || end !== textEnd) {
+    if (start !== textEnd - m[3].length || end !== textEnd) {
       throw new EditError("These words are part of a fix made earlier. Click that fix to change it.");
     }
     const original = fromAttr(m[1]);
     const squash = (s: string) => s.replace(/\s+/g, " ");
-    const next = squash(now) === squash(original) ? original : `<span class="fix" data-was="${m[1]}">${now}</span>`;
+    const next = squash(now) === squash(original) ? original : fixSpan(m[1], m[2], now, edit.to);
     return src.slice(0, m.index) + next + src.slice(spanEnd);
   }
   if (now === was) return src;
-  return src.slice(0, start) + `<span class="fix" data-was="${toAttr(was)}">${now}</span>` + src.slice(end);
+  return src.slice(0, start) + fixSpan(toAttr(was), "", now, edit.to) + src.slice(end);
 }
 
 /** The next free N for id="mine-N", looking at every Markdown file of the folder (book.md holds them all). */
@@ -2515,11 +2657,15 @@ async function nextMineId(file: string): Promise<number> {
 }
 
 async function editNote(src: string, edit: any, file: string): Promise<string> {
-  const { start, end } = locate(src, edit.where);
+  const { start, end: found } = locate(src, edit.where);
+  // (behind a formula's own marks: pdf2md's of its picture, and ours of an improvement)
+  const end = !edit.where?.math || mathMarks(src.slice(start, found)).display
+    ? found
+    : improvedMark(src, found)?.end ?? found + (src.slice(found).match(EQ_KEY)?.[0].length ?? 0);
   const body = String(edit.body ?? "").trim();
   if (!body) throw new EditError("Write something first.");
   const code = codeSpans(src);
-  const displayMath = !!edit.where?.math && mathMarks(src.slice(start, end)).display;
+  const displayMath = !!edit.where?.math && mathMarks(src.slice(start, found)).display;
   const marker = edit.kind === "note" && !!edit.marker && !displayMath;
   if (marker && code.some((c) => end > c.start && end <= c.end)) {
     throw new EditError("A marker can't be put inside code. Untick it, or select other words.");
@@ -2701,9 +2847,9 @@ function findWords(text: string, group: any): Span {
   return { start: m.index, end: m.index + m[0].length };
 }
 
-/** The selection as written in the file, and the rest of its paragraphs before and after it. */
-function peekSource(src: string, edit: any) {
-  const where = edit.where ?? {};
+/** Where the selection is in the file, with the marks right around it. */
+function sourceSpan(src: string, where: any): Span {
+  where ??= {};
   const spans: Span[] = [];
   if (where.head) {
     // footnote marks and the [!WARNING] of a box aren't in the page's text either
@@ -2723,6 +2869,12 @@ function peekSource(src: string, edit: any) {
   const line = src.lastIndexOf("\n", start - 1) + 1;
   if (/^[ \t]*(?:(?:[-+*>|]|\d+[.)]|#{1,6})[ \t]+)+$/.test(src.slice(line, start))) start = line;
   end += src.slice(end, end + 2000).match(/^[*_~]*(?:\]\([^)\n]*\))?[*_~]*(?:[ \t]*\|[ \t]*(?=\r?\n|$))?/)![0].length;
+  return { start, end };
+}
+
+/** The selection as written in the file, and the rest of its paragraphs before and after it. */
+function peekSource(src: string, edit: any) {
+  const { start, end } = sourceSpan(src, edit.where);
   // The paragraphs it is in: from the empty line before it to the one after, taking the
   // whole of a code block or an equation that has empty lines of its own.
   let from = start;
@@ -2738,6 +2890,208 @@ function peekSource(src: string, edit: any) {
   gap.lastIndex = to;
   to = Math.max(to, gap.exec(src)?.index ?? src.trimEnd().length);
   return { before: src.slice(from, start), picked: src.slice(start, end), after: src.slice(end, to) };
+}
+
+// The "Editor" button: the file opened in the reader's own editor, at the selection.
+//
+// Which editor is never the page's to say: a page is made from a Markdown file, which may hold
+// a script, and what the page named would be run on this computer. It is what `md --editor`
+// wrote into mdBun's settings, or else $VISUAL or $EDITOR as the server was started with them.
+// The page only says where; the file, a line and a column are all that is filled in.
+//
+// The editor's own way of naming a place is known for those below. A setting that names the
+// place itself, with {file}, {line} and {column} ({byte}: the column counted in bytes, as vim
+// counts), is used as written; any other editor gets "+line file", which most understand.
+// An editor that runs in a terminal is started in a terminal's window. Where the command
+// can't be run (no editor set, no terminal to be found, as in Termux, or it fails), the page
+// gets the command to show, to be pasted into a terminal.
+const AT_COLONS = ["{file}:{line}:{column}"];
+const AT_GOTO = ["--goto", "{file}:{line}:{column}"];
+const AT_PLUS = ["+{line}:{column}", "{file}"];
+const AT_VIM = ["+call cursor({line},{byte})", "{file}"];
+const AT_LINE = ["+{line}", "{file}"];
+const EDITORS: Record<string, { at: string[]; terminal?: boolean }> = {
+  code: { at: AT_GOTO }, "code-insiders": { at: AT_GOTO }, codium: { at: AT_GOTO }, vscodium: { at: AT_GOTO },
+  cursor: { at: AT_GOTO }, windsurf: { at: AT_GOTO },
+  zed: { at: AT_COLONS }, zeditor: { at: AT_COLONS }, subl: { at: AT_COLONS }, sublime_text: { at: AT_COLONS },
+  geany: { at: AT_COLONS }, lapce: { at: AT_COLONS }, pulsar: { at: AT_COLONS },
+  kate: { at: ["--line", "{line}", "--column", "{column}", "{file}"] },
+  kwrite: { at: ["--line", "{line}", "--column", "{column}", "{file}"] },
+  gedit: { at: AT_PLUS }, pluma: { at: AT_PLUS }, xed: { at: AT_PLUS },
+  emacs: { at: AT_PLUS }, emacsclient: { at: AT_PLUS },
+  gvim: { at: AT_VIM }, neovide: { at: ["{file}", "--", "+call cursor({line},{byte})"] },
+  vim: { at: AT_VIM, terminal: true }, nvim: { at: AT_VIM, terminal: true }, vi: { at: AT_VIM, terminal: true },
+  hx: { at: AT_COLONS, terminal: true }, helix: { at: AT_COLONS, terminal: true },
+  nano: { at: ["+{line},{column}", "{file}"], terminal: true },
+  micro: { at: AT_PLUS, terminal: true }, kak: { at: AT_PLUS, terminal: true },
+};
+// How each terminal is told what to run in its window.
+const TERMINALS: Record<string, string[]> = {
+  "xdg-terminal-exec": [], konsole: ["-e"], "gnome-terminal": ["--"], ptyxis: ["--"], kitty: [], foot: [],
+  alacritty: ["-e"], wezterm: ["start", "--"], ghostty: ["-e"], "xfce4-terminal": ["-x"], xterm: ["-e"],
+};
+
+const EDITOR_SETTING = join(
+  process.env.XDG_CONFIG_HOME || join(process.env.HOME ?? "", ".config"),
+  "mdBun",
+  "editor",
+);
+
+/** The reader's editor as set (read each time, so `md --editor` counts at once), and where from. */
+async function editorSetting(): Promise<{ command: string; from: string } | null> {
+  const lines = (await Bun.file(EDITOR_SETTING).text().catch(() => "")).split("\n");
+  const set = lines.map((l) => l.trim()).find((l) => l && !l.startsWith("#"));
+  if (set) return { command: set, from: "md --editor" };
+  for (const name of ["VISUAL", "EDITOR"]) {
+    const command = process.env[name]?.trim();
+    if (command) return { command, from: "$" + name };
+  }
+  return null;
+}
+
+/** A command line taken apart into its words, as a shell would: quotes and backslashes. */
+function shellWords(line: string): string[] {
+  const words: string[] = [];
+  let word: string | null = null;
+  let quote = "";
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote) {
+      if (c === quote) quote = "";
+      else if (c === "\\" && quote === '"' && i + 1 < line.length && '"\\$`'.includes(line[i + 1])) word += line[++i];
+      else word += c;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+      word ??= "";
+    } else if (c === "\\" && i + 1 < line.length) {
+      word = (word ?? "") + line[++i];
+    } else if (/\s/.test(c)) {
+      if (word !== null) words.push(word);
+      word = null;
+    } else {
+      word = (word ?? "") + c;
+    }
+  }
+  if (word !== null) words.push(word);
+  return words;
+}
+
+/** A word as it is typed in a shell (bash, zsh and fish read it the same). */
+const shellQuote = (word: string) =>
+  /^[\w@%+=:,./-]+$/.test(word) ? word : "'" + word.replace(/'/g, "'\\''") + "'";
+
+/** The line (from 1) of a place in the file, and its column in characters and in bytes. */
+function lineColumn(src: string, at: number) {
+  const before = src.slice(0, at);
+  const line = before.split("\n").length;
+  const inLine = before.slice(before.lastIndexOf("\n") + 1);
+  return { line, column: [...inLine].length + 1, byte: Buffer.byteLength(inLine) + 1 };
+}
+
+/** Start a program on its own, so that it outlives the server; says why if it didn't start. */
+async function launch(argv: string[], cwd: string): Promise<string | null> {
+  return new Promise((done) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(argv[0], argv.slice(1), { cwd, detached: true, stdio: ["ignore", "ignore", "pipe"] });
+    } catch (err) {
+      done((err as Error).message);
+      return;
+    }
+    let said = "";
+    child.stderr?.on("data", (d) => { if (said.length < 2000) said += d; });
+    // An editor that hands the file to a window already open ends at once, and well; one
+    // that can't start ends at once, and badly. Any other is still running after a moment.
+    const wait = setTimeout(() => finish(null), 1200);
+    function finish(why: string | null) {
+      clearTimeout(wait);
+      child.stderr?.destroy();
+      child.unref();
+      done(why);
+    }
+    child.on("error", (err: NodeJS.ErrnoException) =>
+      finish(err.code === "ENOENT" ? "it isn't installed, or isn't where the server looks for programs" : err.message),
+    );
+    child.on("exit", (code, signal) => {
+      const line = said.trim().split("\n").pop()?.trim();
+      finish(code === 0 ? null : line || (signal ? `it was stopped (${signal})` : `it ended with status ${code}`));
+    });
+  });
+}
+
+/** A terminal to run a program in: $TERMINAL, the desktop's own, or the first one found. */
+function terminalCommand(): string[] | null {
+  if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return null;
+  const set = shellWords(process.env.TERMINAL ?? "");
+  if (set.length && Bun.which(set[0])) {
+    return set.length > 1 ? set : [...set, ...(TERMINALS[basename(set[0])] ?? ["-e"])];
+  }
+  const desktop = (process.env.XDG_CURRENT_DESKTOP ?? "").toUpperCase();
+  const first = desktop.includes("KDE") ? ["konsole"] : desktop.includes("GNOME") ? ["gnome-terminal", "ptyxis"] : [];
+  const name = [...first, ...Object.keys(TERMINALS)].find((t) => Bun.which(t));
+  return name ? [name, ...TERMINALS[name]] : null;
+}
+
+async function openEditor(file: string, src: string, edit: any) {
+  // Where: the selection, or (nothing selected) what the window shows, if that can be found.
+  let place: ReturnType<typeof lineColumn> | null = null;
+  if (edit.where) {
+    try {
+      place = lineColumn(src, sourceSpan(src, edit.where).start);
+    } catch (err) {
+      if (!edit.about || !(err instanceof EditError)) throw err;
+    }
+  }
+  const at = place ?? { line: 1, column: 1, byte: 1 };
+  const fill = (word: string) =>
+    word.replace(/\{(file|line|column|byte)\}/g, (_, k: "file" | "line" | "column" | "byte") =>
+      k === "file" ? file : String(at[k]),
+    );
+  const where = place ? `at line ${place.line}` : "at its start";
+
+  const setting = await editorSetting();
+  if (!setting) {
+    return {
+      ran: false,
+      why:
+        "No editor is set. Name yours once in a terminal, for example: md --editor kate\n" +
+        "Until then, this opens the file " + where + " in the editor your shell knows:",
+      command: "$EDITOR " + AT_LINE.map(fill).map(shellQuote).join(" "),
+    };
+  }
+  const words = shellWords(setting.command);
+  if (!words.length) throw new EditError("The editor's setting is empty.");
+  // The editor among the words (a terminal may be named before it: "konsole -e nvim").
+  const known = words.findIndex((w) => EDITORS[basename(w)]);
+  const editor = known >= 0 ? EDITORS[basename(words[known])] : undefined;
+  const name = basename(words[Math.max(known, 0)]);
+  const argv = (words.some((w) => w.includes("{file}")) ? words : [...words, ...(editor?.at ?? AT_LINE)]).map(fill);
+  const command = argv.map(shellQuote).join(" ");
+  const inTerminal =
+    known === 0 && (editor!.terminal || words.some((w) => ["-nw", "-t", "-tty", "--tty", "--no-window-system"].includes(w)));
+
+  let run = argv;
+  if (inTerminal) {
+    const terminal = terminalCommand();
+    if (!terminal) {
+      return {
+        ran: false,
+        why: `${name} runs in a terminal, and there is none here for mdBun to open. This opens the file ${where}:`,
+        command,
+      };
+    }
+    run = [...terminal, ...argv];
+  }
+  const failed = await launch(run, dirname(file));
+  if (failed) {
+    return {
+      ran: false,
+      why: `${basename(run[0])} couldn't be started: ${failed}. This opens the file ${where}, from a terminal:`,
+      command,
+    };
+  }
+  console.log(`Opened ${file} in ${name} (${where})`);
+  return { ran: true, editor: name, line: place?.line ?? null };
 }
 
 // One change at a time, so two can't read the same file and overwrite each other.
@@ -2848,7 +3202,8 @@ const server = Bun.serve({
         // Not a change: the Markdown of a note or of the selection, for the page to show.
         if (edit.op === "peek") return Response.json(peekNote(await Bun.file(file).text(), edit));
         if (edit.op === "source") return Response.json(peekSource(await Bun.file(file).text(), edit));
-        if (edit.op === "fixsource") return Response.json({ now: fixOf(await Bun.file(file).text(), edit.where)[2] });
+        if (edit.op === "fixsource") return Response.json({ now: fixOf(await Bun.file(file).text(), edit.where)[3] });
+        if (edit.op === "editor") return Response.json(await openEditor(file, await Bun.file(file).text(), edit));
         await saveEdit(file, edit);
         return Response.json({ ok: true });
       } catch (err) {

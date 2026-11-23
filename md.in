@@ -4,6 +4,8 @@
 # is added to it; otherwise it's started. With no argument, the current folder is shown.
 #
 #   md --stop    stops the server.
+#   md --editor kate     names the editor that the page's "Editor" button opens a file in;
+#   md --editor          says which is set, and  md --editor ""  forgets it.
 #
 # In Termux the server needs Termux's wake lock: without it, Android freezes the server after
 # some pages unless a Termux window is open. `md` takes the lock and `md --stop` gives it back.
@@ -12,6 +14,25 @@ if [ "$1" = --stop ]; then
     # Ask it to stop. One that doesn't answer (too old, or frozen by Android) is killed.
     curl -sf -m 2 -X POST http://localhost:3000/__stop || { @STOP@; }
     @UNLOCK@
+    exit 0
+fi
+if [ "$1" = --editor ]; then
+    # The server reads this file each time the page's "Editor" button is pressed.
+    setting="${XDG_CONFIG_HOME:-$HOME/.config}/mdBun/editor"
+    if [ $# -gt 1 ]; then
+        shift
+        if [ -n "$*" ]; then
+            mkdir -p "$(dirname "$setting")" && printf '%s\n' "$*" >"$setting" || exit 1
+        else
+            rm -f "$setting"
+        fi
+    fi
+    if [ -s "$setting" ]; then
+        echo "Editor: $(cat "$setting")"
+    else
+        echo "No editor is set: the Editor button uses \$VISUAL or \$EDITOR, as the server was started with them."
+        echo "Set one with, for example: md --editor kate"
+    fi
     exit 0
 fi
 file="$(realpath "${1:-.}")" || exit 1

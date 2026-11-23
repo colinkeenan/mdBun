@@ -19,7 +19,7 @@ It was written to read textbooks converted by [pdf2md](https://github.com/colink
 [pdf2md](https://github.com/colinkeenan/pdf2md) converts a PDF textbook into a folder of Markdown: one file per chapter, formulas as LaTeX, and the contents, index and footnotes as links. The two programs are made to work together.
 
 * **Math in either form.** pdf2md can write formulas [for GitHub or in the standard form](https://github.com/colinkeenan/pdf2md#math-github-or-standard). mdBun reads both and shows them the same, with equation numbers at the right margin.
-* **Corrections that last.** What you change with mdBun's editing buttons is written in the marks that pdf2md [keeps when it converts the book again](https://github.com/colinkeenan/pdf2md#correcting-and-annotating-a-book).
+* **Corrections that last.** What you change with mdBun's editing buttons is written in the marks that pdf2md [keeps when it converts the book again](https://github.com/colinkeenan/pdf2md#correcting-and-annotating-a-book). One mark is mdBun's own and not yet known to pdf2md: the one that says an equation was changed [to improve the original](#to-match-the-original-or-to-improve-it). The equation's correction is kept; its colour is lost at the next conversion.
 * **Equations to check.** pdf2md lists the equations it is least sure of in `check-equations.md`. mdBun adds a button for that list when the folder has one.
 * **Index terms in blue.** Some words in a converted book are blue like links but do nothing when clicked. They are the words the book's index points to: pdf2md marks them so an index link can land on them, and mdBun colours every such mark. They are most noticeable in section titles.
 * **Sentences that go on behind a picture.** Where a book breaks a sentence off for the pictures at the top of the next page, pdf2md writes the two parts in one block (`<div class="over-page">`) with the page's bar and the pictures between. mdBun sets the two parts as one run of words, so the line above the bar is filled to the right margin as on the printed page, and the sentence goes on under the last caption.
@@ -111,6 +111,7 @@ md notes.md     # show a file
 md book/        # list a folder's Markdown files
 md              # the same, for the current folder
 md --stop       # stop the server
+md --editor kate   # name your editor, for the page's Editor button
 ```
 
 On Linux you can also click a `.md` file in the file manager, or right-click a folder and choose **Open With → mdBun**.
@@ -154,10 +155,11 @@ Pages follow the system's light or dark setting. The ☀️/🌙 button switches
 The ✏️ button turns editing on for the tab and shows a bar of buttons. Every change is written to the `.md` file itself; the page then reloads and flashes what changed.
 
 * **Correct an equation**: click it. Its TeX opens with a preview that follows your typing and shows KaTeX's complaint if it cannot be typeset. **Save** or Ctrl+Enter writes it.
-* **Fix text**: select the words that are wrong, press the button and type them as they should be. The fix is written as `<span class="fix" data-was="…">`, which reads as normal text. While editing, fixes are underlined with dots; click one to change or undo it (a fix may hold a formula: the dialog shows its Markdown). The converted text kept in `data-was` may hold a formula too; its `$` and backticks are then written `&#36;` and `&#96;`, as pdf2md writes them. Words in a table can be fixed the same way, also in the title and the note that pdf2md sets across the top and the foot of a table.
+* **Fix text**: select the words that are wrong, press the button and type them as they should be. The fix is written as `<span class="fix" data-was="…">`, which reads as normal text. Both dialogs ask what the change is for: [to match the original or to improve it](#to-match-the-original-or-to-improve-it). While editing, fixes are underlined with dots; click one to change or undo it (a fix may hold a formula: the dialog shows its Markdown). The converted text kept in `data-was` may hold a formula too; its `$` and backticks are then written `&#36;` and `&#96;`, as pdf2md writes them. Words in a table can be fixed the same way, also in the title and the note that pdf2md sets across the top and the foot of a table.
 * **Note**: select words and press the button to add a collapsible note after their paragraph. Tick the box to also put a ✎ marker after the selected words; clicking the marker opens the note.
 * **Warning**: the same, as a box that is always visible, for example where you think the book is wrong.
 * **🔬 See the Markdown**: select anything (words, bold text, a link, a list, a table, a formula) and press the button to see how it is written in the file. The selection is highlighted within the whole of its paragraphs. Nothing is changed. This one is not held to plain words: the selection may run over formatting and formulas.
+* **Editor**: opens the file in [your own editor](#your-editor), at what you selected.
 * **Equations to check** opens `check-equations.md` if the folder has one.
 
 Notes and warnings are Markdown and can hold math. To change or remove one, click it while editing. **Delete** has to be pressed twice, since what you wrote is gone for good.
@@ -168,6 +170,39 @@ Two limits:
 * **Alert boxes inside a list, a footnote or another quote** cannot be told apart from the page, so in a file that has one, change alert boxes in the file itself.
 
 Only pages served by mdBun can ask for changes, and only to `.md` files in folders opened with `md`.
+
+#### To match the original or to improve it
+
+A fix or a corrected equation is one of two things, and its dialog has a radio button for each:
+
+* **To match the original.** The conversion got the book wrong and you put it right. This is the usual case and the one that is selected. The page then reads as the book does, so nothing marks the change unless you are editing.
+* **To improve the original.** The book itself is wrong, or could say it better, and you change what it says. These changes are shown in purple on every page, editing or not, so you always see where the text is not the book's. Pointing at one says what the original has.
+
+Click a fix or an equation while editing to change which of the two it is.
+
+In the file, an improving fix has one more attribute, `<span class="fix" data-was="…" data-to="improve">`, and an improved equation has the comment `<!-- mdBun:improved -->` behind it: right behind a formula in a sentence, on the next line under a displayed one. A change without either is one to match the original, as all were before there was a choice. Notes and warnings are your own words in a box of their own and are not asked about.
+
+#### Your editor
+
+**Editor** opens the page's file in the editor you name, with the cursor at the start of what you selected: words, a formula, or anything 🔬 can find. With nothing selected it opens at the first paragraph the window shows.
+
+Name the editor once, in a terminal:
+
+```sh
+md --editor kate                # an editor mdBun knows
+md --editor 'konsole -e nvim'   # one that runs in a terminal, and the terminal to open
+md --editor 'myedit --at {line}:{column} {file}'   # any other: say where the place goes
+md --editor                     # which is set
+md --editor ""                  # forget it
+```
+
+mdBun knows how these are told a line and a column: VS Code and its relatives (`code`, `codium`, `cursor`, `windsurf`), `zed`, `subl`, `kate`, `kwrite`, `gedit`, `geany`, `emacs`, `emacsclient`, `gvim`, `neovide`, and in a terminal `nvim`, `vim`, `hx`, `nano`, `micro` and `kak`. Any other editor is given `+line file`, which most understand. If yours needs something else, write the command out with `{file}`, `{line}` and `{column}` where they belong (`{byte}` is the column counted in bytes, as vim counts it).
+
+With no editor named, mdBun uses `$VISUAL` or `$EDITOR`, as they were when the server started. An editor that runs in a terminal is opened in a terminal window: `$TERMINAL`, your desktop's own, or the first one found.
+
+**When mdBun cannot start the editor**, it shows the command that would, with a **Copy** button, for you to paste into a terminal. That happens when no editor is named, when the editor is not installed where the server looks, when it fails to start, and when it needs a terminal and there is none to open, as in Termux.
+
+The editor is always the one named on your computer, never one named by a page: a Markdown file can hold a script, and a page must not be able to choose what is run. The setting is kept in `~/.config/mdBun/editor`.
 
 ### Math
 
