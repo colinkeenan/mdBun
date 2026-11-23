@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { watch } from "node:fs";
+import { existsSync, watch } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 // GitHub's emoji shortcodes (":tada:" -> 🎉), generated from the gemoji database.
@@ -3023,7 +3023,11 @@ async function launch(argv: string[], cwd: string): Promise<string | null> {
   });
 }
 
-const ON_ANDROID = !!process.env.TERMUX_VERSION;
+// (Termux says so in its shell; a server started some other way is still on Android where
+// Android's own folders are.)
+const ON_ANDROID =
+  !!(process.env.TERMUX_VERSION || process.env.ANDROID_ROOT || process.env.ANDROID_DATA) ||
+  existsSync("/system/bin/app_process");
 const ANDROID_APP = /^[A-Za-z]\w*(?:\.[A-Za-z_]\w*)+(?:\/[\w.$]+)?$/;
 
 /** A program run to its end (a few seconds at most): what it printed, and how it ended. */
