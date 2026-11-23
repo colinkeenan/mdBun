@@ -2588,7 +2588,8 @@ function editMath(src: string, edit: any, book: boolean): string {
 // knows by the picture (<!-- pdf2md:eq KEY -->): that one is corrected where it stands. One
 // built from the PDF's text has nothing of the kind, so the correction is written the way
 // pdf2md keeps it:
-//   a displayed equation under a mark that holds its LaTeX as converted,
+//   a displayed equation (a block fenced with ```math, or between lines of "$$") under a
+//     mark that holds its LaTeX as converted,
 //     <!-- pdf2md:fix AS CONVERTED -->, an empty line, the corrected block
 //     (pdf2md corrects every equation of the chapter that is converted to that LaTeX again);
 //   a formula in a sentence as a fix, <span class="fix" data-was="AS CONVERTED">…</span>,
@@ -2616,14 +2617,16 @@ function keepCorrection(src: string, span: Span, old: string): string {
   const line = src.lastIndexOf("\n", span.start - 1) + 1;
 
   if (mathMarks(math).display) {
-    // (pdf2md has the mark for a fenced block only)
-    if (!math.startsWith("```")) return src;
+    // A block as pdf2md writes one: fenced, or (in a book written in the standard form)
+    // between two lines of "$$". Each stands on lines of its own.
     const indent = src.slice(line, span.start);
+    const block = (m: string) => m.startsWith("```") || /^\$\$\n[\s\S]*\n[ \t]*\$\$$/.test(m);
+    if (!block(math) || !block(old) || /\S/.test(indent) || !/^[ \t]*(?:\n|$)/.test(src.slice(span.end))) return src;
     const above = src.slice(0, line);
     if (/<!-- pdf2md:eq [0-9a-f]+ -->[ \t]*\n(?:[ \t]*\n)?$/.test(above)) return src;
     // what stands between the fences, as at the margin (in a list item all of it is set in)
     const margin = (s: string) => s.split("\n").map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join("\n");
-    const body = (m: string) => margin(m.slice(mathMarks(m).open, m.length - mathMarks(m).close));
+    const body = (m: string) => margin(m.slice(m.indexOf("\n") + 1, m.lastIndexOf("\n")));
     const at = above.lastIndexOf(FIX_MARK);
     const markLine = above.lastIndexOf("\n", at - 1) + 1;
     // (the mark right above the block: nothing but an empty line between its end and the fence)
