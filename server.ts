@@ -1366,11 +1366,14 @@ const EDIT_HEAD = String.raw`
         // pointer over it by its title, and to a finger, which can't point without pressing,
         // in a bubble where it tapped. Another tap anywhere takes the bubble away. (While
         // editing, a tap opens the dialog of the change, which says the same.)
+        // The bubble is placed on the page, not in the text, and the text moves under it: for
+        // a while after a long chapter opens, as its formulas are fitted to the window one
+        // after another. So for as long as it shows, the bubble follows what it is about.
         const IMPROVED = '.math.improved, span.fix[data-to="improve"]';
         const said = (el) => "Changed to improve the original" + (el.dataset.was == null ? "" : ", which has: " + el.dataset.was);
         for (const el of document.querySelectorAll(IMPROVED)) el.title = said(el);
-        let tip = null, tipOf = null, tipWidth = 0, finger = false;
-        function untip() { if (tip) tip.remove(); tip = tipOf = null; }
+        let tip = null, tipOf = null, tipWidth = 0, finger = false, following = 0;
+        function untip() { if (tip) tip.remove(); tip = tipOf = null; cancelAnimationFrame(following); }
         document.addEventListener("pointerdown", (e) => { finger = e.pointerType !== "mouse"; }, true);
         document.addEventListener("click", (e) => {
           const el = finger && !editing() && e.target.closest ? e.target.closest(IMPROVED) : null;
@@ -1390,10 +1393,19 @@ const EDIT_HEAD = String.raw`
           const all = el.getBoundingClientRect();
           const line = [...el.getClientRects()].find((r) => e.clientY >= r.top && e.clientY <= r.bottom) || all;
           const w = tip.offsetWidth, h = tip.offsetHeight, wide = document.documentElement.clientWidth;
-          const left = Math.max(8, Math.min(e.clientX - w / 2, wide - w - 8));
+          const left = Math.max(8, Math.min(e.clientX - w / 2, wide - w - 8)) - all.left;
           const top = all.bottom + 6 + h <= innerHeight ? all.bottom + 6 : all.top - 6 - h >= 0 ? all.top - 6 - h : line.bottom + 6;
-          tip.style.left = left + scrollX + "px";
-          tip.style.top = top + scrollY + "px";
+          // (where it is from the end of the change it was put by, which it keeps to)
+          const under = top > all.top, dy = top - (under ? all.bottom : all.top);
+          let x, y;
+          const follow = () => {
+            if (!el.isConnected) { untip(); return; }
+            const r = el.getBoundingClientRect();
+            const nx = Math.round(r.left + left + scrollX), ny = Math.round((under ? r.bottom : r.top) + dy + scrollY);
+            if (nx !== x || ny !== y) { tip.style.left = (x = nx) + "px"; tip.style.top = (y = ny) + "px"; }
+            following = requestAnimationFrame(follow);
+          };
+          follow();
         });
         document.addEventListener("keydown", (e) => { if (e.key === "Escape") untip(); });
         // (a window of another width lays the words out anew; a phone's address bar coming
