@@ -12,7 +12,10 @@ const MD_OPTIONS = { autolinks: true, headings: { ids: true } };
 // Live reload is on by default; start with LIVE_RELOAD=0 to turn it off.
 const LIVE_RELOAD = process.env.LIVE_RELOAD !== "0";
 
-const arg = process.argv[2];
+// What to show is the argument, or MDBUN_OPEN where there is none: that is how `md` names
+// it, because Termux's grun, which runs bun there, passes its arguments on unquoted, and a
+// path with a space in it arrived as its first word only.
+const arg = process.argv[2] ?? process.env.MDBUN_OPEN;
 if (!arg || arg === "-h" || arg === "--help") {
   console.error("Usage: bun run server.ts <file.md | folder>   (PORT=3000 by default)");
   process.exit(arg ? 0 : 1);

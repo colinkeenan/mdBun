@@ -51,7 +51,9 @@ if ! url=$(open_file); then
 
     cd @DIR@ || exit 1
 
-    setsid @BUN@ run server.ts "$file" >"$HOME/mdbun.log" 2>&1 &
+    # The file is named in the environment, not as an argument: Termux's grun splits its
+    # arguments at their spaces, so the server was told only the first word of such a path.
+    MDBUN_OPEN="$file" setsid @BUN@ run server.ts >"$HOME/mdbun.log" 2>&1 &
 
     # Wait up to 10 seconds for it to start.
     for _ in {1..100}; do
