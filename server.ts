@@ -161,6 +161,13 @@ const CSS = `
      (an equation's number is the book's still, and keeps the colour of the text). */
   span.fix[data-to="improve"], .math.inline.improved, .math.display.improved:not(.numbered),
   .math.display.improved > .eq-body, .edit-preview.improved { color: var(--a-important); }
+  /* What an improvement says to a finger that taps it (a pointer over it has its title). */
+  .was-tip { position: absolute; left: 0; top: 0; z-index: 1; width: max-content;
+             max-width: min(24rem, calc(100vw - 1rem)); box-sizing: border-box; padding: 0.3rem 0.6rem;
+             font: 0.9rem/1.4 system-ui, sans-serif; white-space: pre-line; overflow-wrap: anywhere;
+             background: Canvas; color: CanvasText; border: 1px solid var(--a-important);
+             border-radius: 6px; box-shadow: 0 2px 10px #0003; }
+  @media print { .was-tip { display: none; } }
   :root[data-edit] details.mine, :root[data-edit] .alert { cursor: pointer; }
   :root[data-edit] details.mine:hover, :root[data-edit] .alert:hover {
     outline: 1px dashed var(--a-note); outline-offset: 2px; }
@@ -883,7 +890,7 @@ const PLACE_HEAD = String.raw`
   <script>
     (() => {
       const KEY = "md-place:" + location.pathname, root = document.documentElement;
-      const UI = "script, style, button, dialog, .edit-bar, .find-bar";
+      const UI = "script, style, button, dialog, .edit-bar, .find-bar, .was-tip";
       const DWELL = 30000;
       // Otherwise the browser's own idea of where to scroll to arrives after ours.
       try { history.scrollRestoration = "manual"; } catch {}
@@ -1035,7 +1042,7 @@ const BROWSE_HEAD = String.raw`
         let text = "";
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
           acceptNode: (n) => n.parentElement && !n.parentElement.closest(
-            "script, style, dialog, button, .find-bar, .edit-bar, .katex-mathml") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+            "script, style, dialog, button, .find-bar, .edit-bar, .was-tip, .katex-mathml") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
         });
         for (let n; (n = walker.nextNode()); ) { nodes.push([n, text.length]); text += n.data; }
         const locate = (pos, isEnd) => {
@@ -1259,7 +1266,7 @@ const EDIT_HEAD = String.raw`
       try { if (sessionStorage.getItem(KEY)) root.setAttribute("data-edit", ""); } catch {}
       const editing = () => root.hasAttribute("data-edit");
       // Text the file doesn't have as such: formulas, footnotes (moved to the end), our own controls.
-      const SKIP = "script, style, dialog, button, .find-bar, .edit-bar, .math, .footnotes, .fnref, .alert-title";
+      const SKIP = "script, style, dialog, button, .find-bar, .edit-bar, .was-tip, .math, .footnotes, .fnref, .alert-title";
       const HINT = "Select words, or click an equation or a note.";
       const NOT_FOUND = "This selection can't be told apart on the page. Select a little more or less.";
       const texOf = new WeakMap(); // each formula's TeX, before KaTeX replaces it
@@ -1352,11 +1359,43 @@ const EDIT_HEAD = String.raw`
 
       document.addEventListener("DOMContentLoaded", () => {
         for (const el of document.querySelectorAll(".math[data-i]")) texOf.set(el, el.textContent);
-        // What is in the colour of an improvement says so, and what the original has.
-        for (const el of document.querySelectorAll(".math.improved")) el.title = "Changed to improve the original";
-        for (const el of document.querySelectorAll('span.fix[data-to="improve"]')) {
-          el.title = "Changed to improve the original, which has: " + el.dataset.was;
-        }
+        // What is in the colour of an improvement says so, and what the original has: to a
+        // pointer over it by its title, and to a finger, which can't point without pressing,
+        // in a bubble where it tapped. Another tap anywhere takes the bubble away. (While
+        // editing, a tap opens the dialog of the change, which says the same.)
+        const IMPROVED = '.math.improved, span.fix[data-to="improve"]';
+        const said = (el) => "Changed to improve the original" + (el.dataset.was == null ? "" : ", which has: " + el.dataset.was);
+        for (const el of document.querySelectorAll(IMPROVED)) el.title = said(el);
+        let tip = null, tipOf = null, tipWidth = 0, finger = false;
+        function untip() { if (tip) tip.remove(); tip = tipOf = null; }
+        document.addEventListener("pointerdown", (e) => { finger = e.pointerType !== "mouse"; }, true);
+        document.addEventListener("click", (e) => {
+          const el = finger && !editing() && e.target.closest ? e.target.closest(IMPROVED) : null;
+          const again = el === tipOf;
+          untip();
+          const sel = getSelection();
+          if (!el || again || (sel && !sel.isCollapsed)) return;
+          tip = document.createElement("div");
+          tip.className = "was-tip";
+          tip.setAttribute("role", "status");
+          tip.textContent = said(el);
+          document.body.append(tip);
+          tipOf = el;
+          tipWidth = innerWidth;
+          // Under what was changed, about the finger; over it where the window ends; and
+          // where the window shows neither end of it, under the line that was tapped.
+          const all = el.getBoundingClientRect();
+          const line = [...el.getClientRects()].find((r) => e.clientY >= r.top && e.clientY <= r.bottom) || all;
+          const w = tip.offsetWidth, h = tip.offsetHeight, wide = document.documentElement.clientWidth;
+          const left = Math.max(8, Math.min(e.clientX - w / 2, wide - w - 8));
+          const top = all.bottom + 6 + h <= innerHeight ? all.bottom + 6 : all.top - 6 - h >= 0 ? all.top - 6 - h : line.bottom + 6;
+          tip.style.left = left + scrollX + "px";
+          tip.style.top = top + scrollY + "px";
+        });
+        document.addEventListener("keydown", (e) => { if (e.key === "Escape") untip(); });
+        // (a window of another width lays the words out anew; a phone's address bar coming
+        // and going only changes the height)
+        addEventListener("resize", () => { if (innerWidth !== tipWidth) untip(); });
         const toggle = document.querySelector(".edit-toggle");
         const bar = document.querySelector(".edit-bar");
         const dialog = document.querySelector("dialog.edit-dialog");

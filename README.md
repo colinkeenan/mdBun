@@ -208,7 +208,7 @@ In a book from pdf2md, a formula that was read from a picture has pdf2md's mark 
 A fix or a corrected equation is one of two things, and its dialog has a radio button for each:
 
 * **To match the original.** The conversion got the book wrong and you put it right. This is the usual case and the one that is selected. The page then reads as the book does, so nothing marks the change unless you are editing.
-* **To improve the original.** The book itself is wrong, or could say it better, and you change what it says. These changes are shown in purple on every page, editing or not, so you always see where the text is not the book's. Pointing at one says what the original has.
+* **To improve the original.** The book itself is wrong, or could say it better, and you change what it says. These changes are shown in purple on every page, editing or not, so you always see where the text is not the book's. Pointing at one says what the original has. On a phone, where nothing points, tap it: the same words show in a bubble by it until you tap again, there or anywhere else. (While editing, a tap opens the change's dialog instead, which says it too.)
 
 Click a fix or an equation while editing to change which of the two it is.
 
