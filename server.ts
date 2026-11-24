@@ -324,13 +324,18 @@ const MATH_SCRIPT = String.raw`
 
       // ---- Reading a formula ----------------------------------------------------------------
       var REL = {};
-      ("= < > \\approx \\equiv \\sim \\simeq \\cong \\neq \\ne \\leq \\le \\geq \\ge \\ll \\gg \\propto \\to " +
+      ("= < > \\approx \\equiv \\doteq \\sim \\simeq \\cong \\neq \\ne \\leq \\le \\geq \\ge \\ll \\gg \\propto \\to " +
         "\\rightarrow \\longrightarrow \\Rightarrow \\Longrightarrow \\leftrightarrow \\Leftrightarrow \\mapsto \\implies \\iff")
         .split(" ").forEach(function (r) { REL[r] = 1; });
       var BIN = { "+": 1, "-": 1, "\\pm": 1, "\\mp": 1 };
       var OPEN = { "(": 1, "[": 1, "\\{": 1, "\\langle": 1, "\\lbrace": 1, "\\lbrack": 1 };
       var CLOSE = { ")": 1, "]": 1, "\\}": 1, "\\rangle": 1, "\\rbrace": 1, "\\rbrack": 1 };
       var SPACE = { "\\,": 1, "\\;": 1, "\\:": 1, "\\!": 1, "\\ ": 1, "\\quad": 1, "\\qquad": 1 };
+      // How wide each space is, in em, and the units of an \hspace: a space of a \quad or
+      // more, at the top level and outside brackets, parts two equations.
+      var GAP = { "\\,": 3 / 18, "\\:": 4 / 18, "\\;": 5 / 18, "\\!": -3 / 18, "\\ ": 0.25, "~": 0.25, "\\quad": 1, "\\qquad": 2 };
+      var PUNCT = { ",": 1, ";": 1, ".": 1, ":": 1 };
+      var UNIT = { em: 1, ex: 0.43, mu: 1 / 18, pt: 0.1, mm: 0.28, cm: 2.8, "in": 7.2 };
 
       // What stands at the top level of a piece of TeX (in no group, no \left…\right, no
       // \begin…\end): the places where a line may be broken, each with a level —
@@ -340,13 +345,16 @@ const MATH_SCRIPT = String.raw`
       //   4, 5  the same inside one or two pairs of \left … \right, which have to be closed
       //         at the line's end and opened again on the next (\right. and \left.)
       //   6, 7  the same, inside plain brackets there
-      // — the row ends and column marks of an environment, and where the first group,
-      // \left or \begin of the text is closed.
+      // — the wide spaces that part one equation from the next on the same line (see GAP),
+      // the row ends and column marks of an environment, and where the first group, \left
+      // or \begin of the text is closed.
       function scan(s) {
-        var out = { breaks: [], rows: [], amps: [], close: -1 };
+        var out = { breaks: [], cuts: [], rows: [], amps: [], close: -1 };
         var group = 0, left = 0, env = 0, paren = 0;
         var outer = []; // the plain brackets open around each \left that is open
         var after = "open"; // what the next sign follows: "open" (it is a sign of its term) or "term"
+        var gap = null; // the space being read: where it began, its width in em, what stands before it
+        var prev = ""; // the last thing read that is not space
         var i = 0, n = s.length;
         function closed(at) {
           if (out.close < 0 && group === 0 && left === 0 && env === 0) out.close = at;
@@ -360,6 +368,27 @@ const MATH_SCRIPT = String.raw`
           }
           var top = group === 0 && left === 0 && env === 0;
           var next = i + tok.length;
+          if (SPACE[tok] || tok === "~" || tok === "\\hspace" || /^\s$/.test(tok)) {
+            // (space: the sign after it follows what stood before it)
+            if (!gap) gap = { at: i, em: 0, prev: prev, top: top && paren === 0 };
+            if (tok === "\\hspace") {
+              var h = /^\s*\{\s*(-?[\d.]+)\s*([a-z]+)\s*\}/.exec(s.slice(next));
+              if (h) { next += h[0].length; gap.em += Number(h[1]) * (UNIT[h[2]] || 0); }
+            } else {
+              gap.em += GAP[tok] || 0;
+            }
+            i = next;
+            continue;
+          }
+          if (gap) {
+            // Two equations on one line have a wide space between them, with or without a
+            // comma before it. (A space is not that: before a plus or minus sign between two
+            // terms, or after a relation sign, since no line ends in one. Whether what it
+            // parts are equations is for read() to say.)
+            if (gap.top && gap.em >= 1 && gap.at > 0 && !REL[gap.prev] && !(BIN[tok] && after === "term")) out.cuts.push({ at: gap.at, end: i, mark: PUNCT[gap.prev] === 1 });
+            gap = null;
+          }
+          prev = tok;
           if (tok === "\\left" || tok === "\\right") {
             // (the bracket it sizes is part of it)
             var d = /^\s*(\\[a-zA-Z]+|\\[\s\S]|[\s\S])/.exec(s.slice(next));
@@ -396,8 +425,6 @@ const MATH_SCRIPT = String.raw`
             after = "term";
           } else if (tok === "^" || tok === "_" || tok === ",") {
             after = "open";
-          } else if (SPACE[tok] || /^\s$/.test(tok)) {
-            // (space: the sign after it follows what stood before it)
           } else {
             after = "term";
           }
@@ -409,6 +436,7 @@ const MATH_SCRIPT = String.raw`
       // A formula as rows of two parts, lined up between the parts — "A" and "= B" — with
       // what stands around the rows: nothing, or a frame, or the braces of a system.
       var TAIL = /^\s*[.,;:]?\s*$/;
+      var WORDS = /^\{?\s*\\(text|textrm|textit|textbf|mathrm|mathit|mathbf)\s*\{[^{}]*\}\s*\}?\s*[.,;:]?$/;
       function read(tex) {
         var t = tex.trim();
         var open = "\\begin{aligned}", shut = "\\end{aligned}";
@@ -446,9 +474,25 @@ const MATH_SCRIPT = String.raw`
             if (good && rows.length) return { pre: "", post: t.slice(c3), rows: rows, was: "rows" };
           }
         }
-        // one line: its left side and the rest, parted before the first relation sign
-        var first = scan(t).breaks.filter(function (b) { return b.level === 1; })[0];
-        return { pre: "", post: "", rows: [first ? { l: t.slice(0, first.at).trim(), r: t.slice(first.at).trim() } : { l: "", r: t }], was: "line" };
+        // one line: its left side and the rest, parted before the first relation sign — and
+        // where it is several equations, one after the other, a row for each of them. A wide
+        // space parts two of them where a comma or the like stands before it, or what stands
+        // before it is an equation (it has a relation sign), or a word comes after it ("and",
+        // "for": that goes with what it leads to). So the cells of a table's row, a label
+        // before a formula and the factors of a product stay on their line.
+        var cuts = scan(t).cuts, line = [], begin = 0;
+        cuts.concat([{ at: t.length, end: t.length }]).forEach(function (c, k) {
+          var part = t.slice(begin, c.at).trim();
+          var first = scan(part).breaks.filter(function (b) { return b.level === 1; })[0];
+          if (k < cuts.length) {
+            var next = t.slice(c.end, k + 1 < cuts.length ? cuts[k + 1].at : t.length).trim();
+            if (WORDS.test(part) || TAIL.test(next)) return;
+            if (!c.mark && !first && !RELSIGN.test(part) && !WORDS.test(next)) return;
+          }
+          line.push(first ? { l: part.slice(0, first.at).trim(), r: part.slice(first.at).trim() } : { l: "", r: part });
+          begin = c.end;
+        });
+        return { pre: "", post: "", rows: line, was: "line" };
       }
 
       // The pieces a text may be broken into, at breaks up to a level: each with the number of
@@ -496,8 +540,8 @@ const MATH_SCRIPT = String.raw`
         } catch (e) {}
         return (widths[tex] = w);
       }
-      var SIGN = /^(=|<|>|\+|-|\\(approx|equiv|sim|simeq|cong|neq|ne|leq|le|geq|ge|ll|gg|propto|to|rightarrow|longrightarrow|Rightarrow|Longrightarrow|leftrightarrow|Leftrightarrow|mapsto|implies|iff|pm|mp)(?![a-zA-Z]))/;
-      var RELSIGN = /^(=|<|>|\\(approx|equiv|sim|simeq|cong|neq|ne|leq|le|geq|ge|ll|gg|propto|to|rightarrow|longrightarrow|Rightarrow|Longrightarrow|leftrightarrow|Leftrightarrow|mapsto|implies|iff)(?![a-zA-Z]))/;
+      var SIGN = /^(=|<|>|\+|-|\\(approx|equiv|doteq|sim|simeq|cong|neq|ne|leq|le|geq|ge|ll|gg|propto|to|rightarrow|longrightarrow|Rightarrow|Longrightarrow|leftrightarrow|Leftrightarrow|mapsto|implies|iff|pm|mp)(?![a-zA-Z]))/;
+      var RELSIGN = /^(=|<|>|\\(approx|equiv|doteq|sim|simeq|cong|neq|ne|leq|le|geq|ge|ll|gg|propto|to|rightarrow|longrightarrow|Rightarrow|Longrightarrow|leftrightarrow|Leftrightarrow|mapsto|implies|iff)(?![a-zA-Z]))/;
       // (a piece that opens with a sign is measured with the space the sign has in a formula)
       function pieceWidth(parts, k) {
         var t = lineOf(parts, k, k);
@@ -533,9 +577,10 @@ const MATH_SCRIPT = String.raw`
         return lines;
       }
 
-      // The formula broken so that it is no wider than "room", at breaks up to "level":
-      // its TeX, or null if that cannot be done. Lined up at the relation signs where the
-      // left sides are short; else each equation begins at the left and goes on set in.
+      // The formula broken so that it is no wider than "room", at breaks up to "level" (0:
+      // only between the equations of a line): its TeX, or null if that cannot be done. Lined
+      // up at the relation signs where the left sides are short; else each equation begins at
+      // the left and goes on set in.
       function broken(f, room, level) {
         var quad = width("\\quad") || 18;
         // (what stands around the rows — a frame, braces, a full stop — takes its room)
@@ -563,7 +608,7 @@ const MATH_SCRIPT = String.raw`
             hung.forEach(function (line, j) { out.push("& " + (j === 0 ? "" : "\\quad ") + line.tex); });
           }
         }
-        if (out.length === f.rows.length && f.was === "line") return null; // nothing was broken
+        if (out.length === 1 && f.was === "line") return null; // nothing was broken
         return { tex: f.pre + "\\begin{aligned} " + out.join(" \\\\ ") + " \\end{aligned}" + f.post, lines: out.length };
       }
 
@@ -572,7 +617,8 @@ const MATH_SCRIPT = String.raw`
       // broken before its relation signs, with its number beside it; given the whole width,
       // its number on a row of its own under it; broken before plus and minus signs too, first
       // outside brackets, then inside them; and only if none of that is enough, left to be
-      // scrolled sideways.
+      // scrolled sideways. Equations that stand one after the other on a line are parted
+      // before any of them is broken: each has a line of its own.
       //
       // What a formula is to look like in a place "wide" px wide, "no" px of it its number's
       // (0: it has none): { tex, below (the number has its own row), scroll }.
@@ -582,6 +628,7 @@ const MATH_SCRIPT = String.raw`
         var f = null;
         function at(room, level) {
           f = f || read(d.tex);
+          if (level === 0 && !(f.was === "line" && f.rows.length > 1)) return null; // (one equation)
           // (the pieces' widths, added up, are a little off the width of the whole: where it
           // comes out too wide by some pixels, once more with that much less room)
           var less = 0;
@@ -595,10 +642,10 @@ const MATH_SCRIPT = String.raw`
           }
           return null;
         }
-        var tex = no ? at(wide - no, 1) : null;
+        var tex = no ? at(wide - no, 0) || at(wide - no, 1) : null;
         if (tex) return { tex: tex, below: false, scroll: false };
         if (no && whole <= wide + 0.5) return { tex: d.tex, below: true, scroll: false };
-        for (var level = 1; level <= 7; level++) {
+        for (var level = 0; level <= 7; level++) {
           tex = at(wide, level);
           if (tex) return { tex: tex, below: no > 0, scroll: false };
         }

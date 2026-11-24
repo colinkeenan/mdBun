@@ -249,6 +249,8 @@ A displayed formula is fitted to the width it has, so that on a phone it need no
 3. broken before plus and minus signs too: first outside brackets, then inside them (a bracket set with `\left … \right` is closed at the line's end and opened again on the next, invisibly);
 4. left as it is, to be scrolled sideways, if none of that is enough: a wide matrix, a long fraction or root.
 
+Several equations on one line are parted before any of them is broken: each has a line of its own, lined up at their relation signs. What parts two equations is a space of a `\quad` or more between them, with or without a comma before it (`a = b, \quad c = d`, `a = b \qquad c = d`); a word between them (`\text{and}`) goes with the equation after it. Without a comma, the space has to follow an equation (something with a relation sign) or come before such a word, so the cells of a table's row or a label before a formula stay on their line. A space inside brackets, before a plus or minus sign between two terms, or after a relation sign does not part anything.
+
 A formula already in lines (`aligned`, also inside the braces of a system or a `\boxed` frame) has its lines broken the same way. The number is taken from a `\tag{…}` at the formula's end, or from the text pdf2md writes there for GitHub. Formulas near what the window shows are fitted first, the rest while the browser is idle; turning the phone or resizing the window fits them again.
 
 ### Tabs and reloading
