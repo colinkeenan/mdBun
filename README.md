@@ -11,7 +11,7 @@ It was written to read textbooks converted by [pdf2md](https://github.com/colink
 * **Follows links between files**, so a table of contents that links to one file per chapter works like a small website.
 * **Lists a folder's Markdown files**, and lets you browse and search them from any page.
 * **Remembers your place** in every file.
-* **Edits the file from the page**: correct an equation, fix a word, add a note.
+* **Edits the file from the page**: correct an equation, fix a word, add a note. Every change says whose it is and can be undone.
 * **Reloads a page** when its file changes.
 
 ## Reading books from pdf2md
@@ -19,7 +19,7 @@ It was written to read textbooks converted by [pdf2md](https://github.com/colink
 [pdf2md](https://github.com/colinkeenan/pdf2md) converts a PDF textbook into a folder of Markdown: one file per chapter, formulas as LaTeX, and the contents, index and footnotes as links. The two programs are made to work together.
 
 * **Math in either form.** pdf2md can write formulas [for GitHub or in the standard form](https://github.com/colinkeenan/pdf2md#math-github-or-standard). mdBun reads both and shows them the same, with equation numbers at the right margin.
-* **Corrections that last.** What you change with mdBun's editing buttons is written in the marks that pdf2md [keeps when it converts the book again](https://github.com/colinkeenan/pdf2md#correcting-and-annotating-a-book). Whether a change was made to match the original or [to improve it](#to-match-the-original-or-to-improve-it) is kept with it.
+* **Corrections that last.** What you change with mdBun's editing buttons is written in the marks that pdf2md [keeps when it converts the book again](https://github.com/colinkeenan/pdf2md#correcting-and-annotating-a-book). Whether a change was made to match the original or [to improve it](#to-match-the-original-or-to-improve-it) is kept with it, and so is [whose change it is and what stood there before](#whose-change-it-is-and-what-it-was).
 * **Equations to check.** pdf2md lists the equations it is least sure of in `check-equations.md`. mdBun adds a button for that list when the folder has one.
 * **Index terms in blue.** Some words in a converted book are blue like links but do nothing when clicked. They are the words the book's index points to: pdf2md marks them so an index link can land on them, and mdBun colours every such mark. They are most noticeable in section titles.
 * **Sentences that go on behind a picture.** Where a book breaks a sentence off for the pictures at the top of the next page, pdf2md writes the two parts in one block (`<div class="over-page">`) with the page's bar and the pictures between. mdBun sets the two parts as one run of words, so the line above the bar is filled to the right margin as on the printed page, and the sentence goes on under the last caption.
@@ -112,6 +112,7 @@ md book/        # list a folder's Markdown files
 md              # the same, for the current folder
 md --stop       # stop the server
 md --editor kate   # name your editor, for the page's Editor button
+md --name Ann      # name yourself: your changes are marked as yours
 ```
 
 On Linux you can also click a `.md` file in the file manager, or right-click a folder and choose **Open With → mdBun**.
@@ -155,7 +156,8 @@ Pages follow the system's light or dark setting. The ☀️/🌙 button switches
 The ✏️ button turns editing on for the tab and shows a bar of buttons. Every change is written to the `.md` file itself; the page then reloads and flashes what changed.
 
 * **Correct an equation**: click it. Its TeX opens with a preview that follows your typing and shows KaTeX's complaint if it cannot be typeset. **Save** or Ctrl+Enter writes it.
-* **Fix text**: select what is wrong and press the button. [The dialog](#fixing-text) shows the selection as the file writes it, in Markdown, for you to change. Both dialogs ask what the change is for: [to match the original or to improve it](#to-match-the-original-or-to-improve-it). While editing, fixes are underlined with dots; click one to change or undo it. Words in a table can be fixed the same way, also in the title and the note that pdf2md sets across the top and the foot of a table.
+* **Fix text**: select what is wrong and press the button. [The dialog](#fixing-text) shows the selection as the file writes it, in Markdown, for you to change. Both dialogs ask what the change is for: [to match the original or to improve it](#to-match-the-original-or-to-improve-it). Words in a table can be fixed the same way, also in the title and the note that pdf2md sets across the top and the foot of a table.
+* **Change or undo a change**: while editing, fixes and changed equations are underlined with dots. Click one: its dialog says [whose change it is and what stood there before](#whose-change-it-is-and-what-it-was), and **Undo** puts that back.
 * **Note**: select words and press the button to add a collapsible note after their paragraph. Tick the box to also put a ✎ marker after the selected words; clicking the marker opens the note.
 * **Warning**: the same, as a box that is always visible, for example where you think the book is wrong.
 * **🔬 See the Markdown**: select anything (words, bold text, a link, a list, a table, a formula) and press the button to see how it is written in the file. The selection is highlighted within the whole of its paragraphs. Nothing is changed, so it may be of anything: several paragraphs, a list, a displayed equation.
@@ -167,7 +169,7 @@ The ✏️ button turns editing on for the tab and shows a bar of buttons. Every
 * One that pdf2md read from a picture is corrected where it stands. pdf2md knows it by its picture.
 * One that pdf2md built from the PDF's text has no picture. A displayed equation gets a mark above it that holds the equation as converted, `<!-- pdf2md:fix … -->`. A formula in a sentence is wrapped as a fix, like corrected words, together with a few of the words around it if the same formula stands earlier in the line.
 
-Correct it back to what was converted, and the mark or the fix is gone again. pdf2md corrects every displayed equation of the chapter that it converts to the same LaTeX, so a mistake the conversion makes several times needs correcting once. That goes for both forms of math, a block fenced with ```` ```math ```` and one between lines of `$$`. In a folder that pdf2md did not write, an equation is simply corrected where it stands.
+Undo the change, or correct the equation back to what was converted, and the mark or the fix is gone again. pdf2md corrects every displayed equation of the chapter that it converts to the same LaTeX, so a mistake the conversion makes several times needs correcting once. That goes for both forms of math, a block fenced with ```` ```math ```` and one between lines of `$$`. In a folder that pdf2md did not write, an equation is simply corrected where it stands.
 
 Notes and warnings are Markdown and can hold math. To change or remove one, click it while editing. **Delete** has to be pressed twice, since what you wrote is gone for good.
 
@@ -212,7 +214,29 @@ A fix or a corrected equation is one of two things, and its dialog has a radio b
 
 Click a fix or an equation while editing to change which of the two it is.
 
-In the file, an improving fix has one more attribute, `<span class="fix" data-was="…" data-to="improve">`, and an improved equation has the comment `<!-- mdBun:improved -->` behind it: right behind a formula in a sentence, on the next line under a displayed one. A change without either is one to match the original, as all were before there was a choice. Notes and warnings are your own words in a box of their own and are not asked about.
+In the file, an improving fix has one more attribute, `<span class="fix" data-was="…" data-to="improve">`, and an improved equation has the comment `<!-- mdBun:improved … -->` behind it: right behind a formula in a sentence, on the next line under a displayed one. An equation changed to match the original has `<!-- mdBun:corrected … -->` there. Notes and warnings are your own words in a box of their own and are not asked about.
+
+#### Whose change it is, and what it was
+
+Every change made from a page is written with the name of who made it, and with what stood there before. Point at a change (or tap an improvement on a phone) and the page says both: "Changed by Ann to improve the original, which has: …", or "Corrected by Ann to match the original. As converted: …". The change's dialog says the same, and its **Undo** button puts back what was there and takes the mark away. A note or a warning has the name behind its title.
+
+Your name is the one you are logged in with, until you give another:
+
+```sh
+md --name Ann     # your changes are marked as made by Ann
+md --name         # which name is set
+md --name ""      # forget it
+```
+
+In Termux the login name is no name (`u0_a123`), so set one there. A change you make to somebody else's change becomes yours.
+
+In the file, the name is `data-by="Ann"` in the tag of a fix or of a note, and `by="Ann"` in the comment behind a changed equation. That comment also keeps the equation as it was, which a fix keeps in `data-was`:
+
+```
+$`E = m c^{2}`$<!-- mdBun:corrected by="Ann" was="E = m c^{3}" -->
+```
+
+`was` is left out where the file has the equation's first form already: under pdf2md's own mark above a displayed equation (`<!-- pdf2md:fix … -->`), and inside a fix. A warning or another alert box has a last line, `> <!-- mdBun:note by="Ann" -->`. A program that writes into your Markdown can say so the same way, so the page tells its changes from yours. `<!-- mdBun:improved -->` alone, as improvements were marked before, is still read.
 
 #### Your editor
 

@@ -6,6 +6,8 @@
 #   md --stop    stops the server.
 #   md --editor kate     names the editor that the page's "Editor" button opens a file in;
 #   md --editor          says which is set, and  md --editor ""  forgets it.
+#   md --name Ann        names you: the changes you make from a page are marked as yours;
+#   md --name            says which name is set, and  md --name ""  forgets it.
 #
 # In Termux the server needs Termux's wake lock: without it, Android freezes the server after
 # some pages unless a Termux window is open. `md` takes the lock and `md --stop` gives it back.
@@ -32,6 +34,26 @@ if [ "$1" = --editor ]; then
     else
         echo "No editor is set: the Editor button uses \$VISUAL or \$EDITOR, as the server was started with them."
         echo "Set one with, for example: md --editor kate"
+    fi
+    exit 0
+fi
+if [ "$1" = --name ]; then
+    # The server reads this file each time a page changes a file: the name it writes with
+    # the change.
+    setting="${XDG_CONFIG_HOME:-$HOME/.config}/mdBun/name"
+    if [ $# -gt 1 ]; then
+        shift
+        if [ -n "$*" ]; then
+            mkdir -p "$(dirname "$setting")" && printf '%s\n' "$*" >"$setting" || exit 1
+        else
+            rm -f "$setting"
+        fi
+    fi
+    if [ -s "$setting" ]; then
+        echo "Your changes are marked as made by: $(cat "$setting")"
+    else
+        echo "No name is set: your changes are marked as made by $(id -un), the name you are logged in with."
+        echo "Set one with, for example: md --name Ann"
     fi
     exit 0
 fi

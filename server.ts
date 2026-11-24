@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, watch } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
+import { userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 // GitHub's emoji shortcodes (":tada:" -> 🎉), generated from the gemoji database.
 import emojiMap from "./emojis.json";
@@ -160,6 +161,16 @@ const CSS = `
                                          border-radius: 3px; }
   :root[data-edit] span.fix[data-was] { text-decoration: underline dotted var(--a-tip); }
   :root[data-edit] span.fix[data-to="improve"] { text-decoration-color: var(--a-important); }
+  /* A changed equation is told from the others while editing, as a fix is: by dots, under it. */
+  /* (a displayed one under each of its pieces, which are as wide as the formula together;
+     not under its number, which is the book's) */
+  :root[data-edit] .math.inline:is(.corrected, .improved),
+  :root[data-edit] .math.display:is(.corrected, .improved):not(.numbered) .katex-html > .base,
+  :root[data-edit] .math.display:is(.corrected, .improved) > .eq-body .katex-html > .base {
+    border-bottom: 1px dotted var(--a-tip); }
+  :root[data-edit] .math.inline.improved,
+  :root[data-edit] .math.display.improved:not(.numbered) .katex-html > .base,
+  :root[data-edit] .math.display.improved > .eq-body .katex-html > .base { border-bottom-color: var(--a-important); }
   /* What was changed to improve on the original, not to match it, has a colour of its own
      (an equation's number is the book's still, and keeps the colour of the text). */
   span.fix[data-to="improve"], .math.inline.improved, .math.display.improved:not(.numbered),
@@ -212,6 +223,9 @@ const CSS = `
   /* Your own notes (<details class="mine">) stand out from the book's text. */
   details.mine { border-color: var(--a-note); }
   details.mine > summary { color: var(--a-note); }
+  /* Whose note or box it is, behind its title (which is given the name for that). */
+  details.mine > summary[data-by]::after { content: " · " attr(data-by); font-weight: normal; opacity: 0.75; }
+  .alert-title[data-by]::after { content: "· " attr(data-by); font-weight: normal; opacity: 0.75; }
 
   /* Browse and search dialog */
   .browse { width: min(40rem, calc(100vw - 2rem)); max-height: min(40rem, calc(100vh - 2rem));
@@ -1298,6 +1312,9 @@ const browseDialog = (dir: string) => `<button class="browse-toggle" type="butto
 // A fix and a corrected equation are either to match the original (the conversion got it
 // wrong: the usual case, written as it always was) or to improve on it (the book is changed:
 // marked so in the file, and shown in a colour of its own). The dialog asks which.
+// Every change is written with whose it is and with what stood there before, so the page can
+// say both (a pointer over the change, a tap on an improvement, the change's dialog) and can
+// undo the change: a fix and a changed equation alike.
 // These are the marks pdf2md keeps when it converts a book again. The page only says what to
 // change and where; the server (saveEdit below) finds the place in the file and writes it,
 // and live reload then shows the result.
@@ -1416,9 +1433,22 @@ const EDIT_HEAD = String.raw`
         // The bubble is placed on the page, not in the text, and the text moves under it: for
         // a while after a long chapter opens, as its formulas are fitted to the window one
         // after another. So for as long as it shows, the bubble follows what it is about.
+        // What was changed to match the original looks like the rest of the page, so it has
+        // only the title (and its dots while editing).
         const IMPROVED = '.math.improved, span.fix[data-to="improve"]';
-        const said = (el) => "Changed to improve the original" + (el.dataset.was == null ? "" : ", which has: " + el.dataset.was);
-        for (const el of document.querySelectorAll(IMPROVED)) el.title = said(el);
+        const CHANGED = IMPROVED + ', .math.corrected, span.fix[data-was]';
+        const said = (el) => {
+          const by = el.dataset.by ? " by " + el.dataset.by : "", was = el.dataset.was;
+          return el.matches(IMPROVED)
+            ? "Changed" + by + " to improve the original" + (was == null ? "" : ", which has: " + was)
+            : "Corrected" + by + " to match the original" + (was == null ? "" : ". As converted: " + was);
+        };
+        for (const el of document.querySelectorAll(CHANGED)) el.title = said(el);
+        // (whose note it is, for its title to show: see the CSS)
+        for (const note of document.querySelectorAll("details.mine[data-by]")) {
+          const title = note.querySelector(":scope > summary");
+          if (title) title.dataset.by = note.dataset.by;
+        }
         let tip = null, tipOf = null, tipWidth = 0, finger = false, following = 0;
         function untip() { if (tip) tip.remove(); tip = tipOf = null; cancelAnimationFrame(following); }
         document.addEventListener("pointerdown", (e) => { finger = e.pointerType !== "mouse"; }, true);
@@ -1546,12 +1576,18 @@ const EDIT_HEAD = String.raw`
           const tex = src.slice(Number(el.dataset.open), src.length - Number(el.dataset.close)).trim();
           const where = { math: { i: Number(el.dataset.i), was: src } };
           const was = el.classList.contains("improved") ? "improve" : "match";
+          // What the file tells of a change made to it before: whose it is, and what the
+          // equation was (with that, the change can be undone).
+          const by = el.dataset.by, before = el.dataset.was;
           const form = ask("Correct this equation",
+            '<p class="edit-was"></p>' +
             '<textarea name="tex" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="The equation in TeX"></textarea>' +
             '<div class="edit-preview"></div>' + WHY,
+            (before == null ? "" : '<button type="button" class="edit-undo">Undo this change</button>') +
             '<button type="button" data-then="note">Note after it…</button>' +
             '<button type="button" data-then="warning">Warning after it…</button>',
             (f) => {
+              if (f.dataset.undo) return { op: "math", where, undo: true };
               const now = f.elements.tex.value.trim();
               if (!now) throw new Error("The equation can't be empty.");
               const to = f.elements.to.value;
@@ -1563,8 +1599,13 @@ const EDIT_HEAD = String.raw`
           area.value = tex;
           area.rows = Math.min(16, Math.max(3, tex.split("\n").length + 1));
           form.elements.to.value = was;
+          const told = form.querySelector(".edit-was");
+          told.hidden = !by && before == null;
           function show() {
-            preview.classList.toggle("improved", form.elements.to.value === "improve");
+            const improve = form.elements.to.value === "improve";
+            preview.classList.toggle("improved", improve);
+            told.textContent = (by ? "Changed by " + by + ". " : "") +
+              (before == null ? "" : (improve ? "The original has: " : "As converted: ") + before);
             if (!window.katex) return;
             error.textContent = "";
             try {
@@ -1580,6 +1621,8 @@ const EDIT_HEAD = String.raw`
           for (const b of form.querySelectorAll("[data-then]")) {
             b.addEventListener("click", () => { dialog.close(); openNote(b.dataset.then, where, display ? "" : "the formula"); });
           }
+          const undo = form.querySelector(".edit-undo");
+          if (undo) undo.addEventListener("click", () => { form.dataset.undo = "1"; form.requestSubmit(); });
         }
 
         // A fix: of what is selected, or the one that was clicked (where: which). The server
@@ -1629,9 +1672,11 @@ const EDIT_HEAD = String.raw`
           const show = () => {
             const improve = form.elements.to.value === "improve";
             const style = styleOf(styling.value);
-            form.querySelector(".edit-was").textContent = (improve ? "The original has: " : "As converted: ") + got.was;
+            form.querySelector(".edit-was").textContent = (got.by ? "Changed by " + got.by + ". " : "") +
+              (improve ? "The original has: " : "As converted: ") + got.was;
             form.querySelector(".edit-tag").textContent =
-              '<span class="fix" data-was="' + got.attr + '"' + (improve ? ' data-to="improve"' : "") + got.rest +
+              '<span class="fix" data-was="' + got.attr + '"' + (improve ? ' data-to="improve"' : "") +
+              ' data-by="' + got.me + '"' + got.rest +
               (style ? ' style="' + toAttr(style) + '"' : "") + ">";
           };
           form.addEventListener("change", show);
@@ -2091,28 +2136,156 @@ function mathMarks(math: string): { display: boolean; open: number; close: numbe
   return { display: false, open: 1, close: 1 };
 }
 
-// A formula changed to improve on the original, not to match it, has this mark behind it: a
-// formula in a sentence right behind it (behind pdf2md's own mark of the formula's picture, if
-// it has one), a displayed one on the line under it.
-const IMPROVED = "<!-- mdBun:improved -->";
+// A formula that was changed has a mark behind it that says what for, whose change it is and
+// what the formula was: a formula in a sentence right behind it (behind pdf2md's own mark of
+// the formula's picture, if it has one), a displayed one on the line under it.
+//   <!-- mdBun:corrected by="Ann" was="E = m c^{3}" -->   changed to match the original
+//   <!-- mdBun:improved by="Ann" was="E = m c^{3}" -->    changed to improve on it
+// by: who changed it (see myName). was: its TeX before the change, which "Undo" puts back. It
+// is left out where the file keeps that already: in pdf2md's mark above a displayed equation
+// (<!-- pdf2md:fix … -->), or in the fix a formula stands in (data-was). Its line breaks are
+// written "&#10;", so the mark is of one line. An equation read from a picture has it without
+// the equation's number (see NUMBER_END). <!-- mdBun:improved --> alone is how an
+// improvement was marked before the mark said more.
 const EQ_KEY = /^<!-- pdf2md:eq [0-9a-f]+ -->/;
-const IMPROVED_AFTER = /^(<!-- pdf2md:eq [0-9a-f]+ -->)?((?:[ \t]*\r?\n[ \t>]*)?<!-- mdBun:improved -->)/;
+const MARK_AFTER =
+  /(<!-- pdf2md:eq [0-9a-f]+ -->)?((?:[ \t]*\r?\n[ \t>]*)?<!-- mdBun:(improved|corrected)((?: [a-z]+="[^"]*")*) -->)/y;
 
-/** Where that mark is (with the line break before it), for the formula that ends at `end`. */
-function improvedMark(src: string, end: number): { start: number; end: number } | null {
-  const m = src.slice(end, end + 400).match(IMPROVED_AFTER);
-  return m ? { start: end + (m[1]?.length ?? 0), end: end + m[0].length } : null;
+/** A change as the file tells it: what for, by whom, and what stood there before. */
+type Change = { to: "improve" | "match"; by?: string; was?: string };
+
+/** What a mark of ours says, from what stands in its tag (` by="Ann" was="…"`). */
+const markSays = (attrs: string, name: string): string | undefined => {
+  const value = attrs.match(new RegExp(` ${name}="([^"]*)"`))?.[1];
+  return value === undefined ? undefined : fromAttr(value);
+};
+
+/** That mark (with the line break before it) and what it says, for the formula that ends at `end`. */
+function changeMark(src: string, end: number): (Change & Span) | null {
+  MARK_AFTER.lastIndex = end;
+  const m = MARK_AFTER.exec(src);
+  if (!m) return null;
+  return {
+    start: end + (m[1]?.length ?? 0),
+    end: end + m[0].length,
+    to: m[3] === "improved" ? "improve" : "match",
+    by: markSays(m[4], "by"),
+    was: markSays(m[4], "was"),
+  };
 }
 
-type Formula = { math: string; improved: boolean };
+/** The mark as written. (A comment can't hold two hyphens in a row.) */
+const markAttr = (s: string) => toAttr(s).replace(/\r?\n/g, "&#10;").replace(/--/g, "-&#45;");
+const markOf = (c: Change) =>
+  `<!-- mdBun:${c.to === "improve" ? "improved" : "corrected"}` +
+  (c.by ? ` by="${markAttr(c.by)}"` : "") +
+  (c.was !== undefined ? ` was="${markAttr(c.was)}"` : "") +
+  " -->";
+
+/** Lines without what they are set in by (in a list item, a block stands under the item's words). */
+const atMargin = (s: string, indent: string) =>
+  indent ? s.split("\n").map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join("\n") : s;
+
+/** The same TeX, but for how its blanks are set. */
+const sameTex = (a: string, b: string) => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
+
+/** A formula's TeX without the marks around it, a displayed one's at the margin; indent: what its lines are set in by. */
+function texAt(src: string, span: Span): { tex: string; indent: string } {
+  const math = src.slice(span.start, span.end);
+  const { display, open, close } = mathMarks(math);
+  const before = src.slice(src.lastIndexOf("\n", span.start - 1) + 1, span.start);
+  const indent = display && /^[ \t]*$/.test(before) ? before : "";
+  return { tex: atMargin(math.slice(open, math.length - close).trim(), indent), indent };
+}
+
+// An equation read from a picture (pdf2md's mark of the picture is above it) has its number
+// from the text beside the picture, and pdf2md keeps our mark by picture: for every place the
+// book shows that picture, whatever number the equation has there. So what such an equation
+// was is kept without its number, and put back with the number the equation has now.
+const NUMBER_END = /\s*(?:\\qquad \\text\{\([^{}]*\)\}|\\tag\*?\{[^{}]*\})$/;
+const numberOf = (tex: string) => tex.match(NUMBER_END)?.[0] ?? "";
+const fromPicture = (src: string, span: Span) => {
+  const line = src.lastIndexOf("\n", span.start - 1) + 1;
+  return /<!-- pdf2md:eq [0-9a-f]+ -->[ \t]*\n(?:[ \t]*\n)?$/.test(src.slice(Math.max(0, line - 120), line));
+};
+/** A displayed equation's TeX as our mark keeps it (see above). */
+const asKept = (src: string, span: Span, tex: string) =>
+  fromPicture(src, span) ? tex.slice(0, tex.length - numberOf(tex).length) : tex;
+
+/**
+ * pdf2md's mark right above a displayed block, with an empty line between them (see
+ * keepCorrection): where the mark's line begins, and the block's TeX as converted.
+ */
+function fixAbove(src: string, span: Span): { markLine: number; was: string } | null {
+  const line = src.lastIndexOf("\n", span.start - 1) + 1;
+  const indent = src.slice(line, span.start);
+  const gap = src.slice(Math.max(0, line - 200), line).match(/ -->\n[ \t]*\n$/);
+  if (!gap) return null;
+  const close = line - gap[0].length;
+  const at = src.lastIndexOf("<!-- ", close);
+  if (at < 0 || !src.startsWith(FIX_MARK, at)) return null;
+  const markLine = src.lastIndexOf("\n", at - 1) + 1;
+  if (src.slice(markLine, at) !== indent) return null;
+  return { markLine, was: fromAttr(atMargin(src.slice(at + FIX_MARK.length, close), indent)) };
+}
+
+/**
+ * What the file tells of each formula: changed or not, what for, by whom, and what it was.
+ * Returns the question to ask per formula (the fixes of the file are looked up once).
+ *
+ * What it was is in our mark, or where the file has it besides: in pdf2md's mark above a
+ * displayed equation, or in the fix the formula stands in, whose converted text has as many
+ * formulas as the fix (the nth was this one). A formula that stands as it was is not changed,
+ * whatever mark is above it (pdf2md's mark above an equation as converted only says that the
+ * equation was looked at).
+ */
+function changesIn(src: string): (span: Span) => Change | null {
+  const fixes = [...src.matchAll(FIX_SPAN)].map((m) => ({ start: m.index, end: m.index + m[0].length, m }));
+  let from = 0; // (formulas are asked about in their order, mostly)
+  const fixAround = (span: Span) => {
+    if (from >= fixes.length || (from > 0 && fixes[from - 1].end > span.start)) from = 0;
+    while (from < fixes.length && fixes[from].end <= span.start) from++;
+    const fix = fixes[from];
+    return fix && fix.start < span.start && span.end < fix.end ? fix.m : undefined;
+  };
+  return (span) => {
+    const mark = changeMark(src, span.end);
+    const { tex } = texAt(src, span);
+    const display = mathMarks(src.slice(span.start, span.end)).display;
+    let was = mark?.was;
+    let by = mark?.by;
+    if (display) {
+      was ??= fixAbove(src, span)?.was;
+    } else {
+      const fix = fixAround(span);
+      if (fix) {
+        by ??= markSays(fix[2], "data-by");
+        if (was === undefined) {
+          const at = fix.index! + fix[0].length - "</span>".length - fix[3].length;
+          const now = mathSpans(fix[3]);
+          const converted = fromAttr(fix[1]);
+          const then = mathSpans(converted);
+          const n = now.findIndex((f) => at + f.start === span.start);
+          if (n >= 0 && now.length === then.length) was = texAt(converted, then[n]).tex;
+        }
+      }
+    }
+    if (was !== undefined && sameTex(was, display ? asKept(src, span, tex) : tex)) was = undefined;
+    if (mark) return { to: mark.to, by, was };
+    return was === undefined ? null : { to: "match", by, was };
+  };
+}
+
+type Formula = { math: string; change: Change | null };
 
 function protectMath(src: string) {
   const stash: Formula[] = [];
+  const changeOf = changesIn(src);
   const text = src.replace(PROTECT, (m, ...groups) => {
     const math = mathOf(groups);
     if (!math) return m;
     const at = groups[6] as unknown as number; // where the match is: what follows the six groups
-    stash.push({ math, improved: !!improvedMark(src, at + math.length) });
+    stash.push({ math, change: changeOf({ start: at, end: at + math.length }) });
     return `ZZMATH${stash.length - 1}ZZ`;
   });
   return { text, stash };
@@ -2120,12 +2293,17 @@ function protectMath(src: string) {
 
 function restoreMath(html: string, stash: Formula[]) {
   return html.replace(/ZZMATH(\d+)ZZ/g, (_, i) => {
-    const { math, improved } = stash[Number(i)];
+    const { math, change } = stash[Number(i)];
     const { display, open, close } = mathMarks(math);
-    const cls = (display ? "math display" : "math inline") + (improved ? " improved" : "");
+    const cls =
+      (display ? "math display" : "math inline") + (!change ? "" : change.to === "improve" ? " improved" : " corrected");
     // data-i: which formula of the file it is, so the page can ask to correct it;
-    // data-open, data-close: how long the marks around the TeX are
-    return `<span class="${cls}" data-i="${i}" data-open="${open}" data-close="${close}">${escapeHtml(math)}</span>`;
+    // data-open, data-close: how long the marks around the TeX are;
+    // data-by, data-was: who changed it, and its TeX before
+    const told =
+      (change?.by ? ` data-by="${escapeHtml(change.by)}"` : "") +
+      (change?.was !== undefined ? ` data-was="${escapeHtml(change.was)}"` : "");
+    return `<span class="${cls}" data-i="${i}" data-open="${open}" data-close="${close}"${told}>${escapeHtml(math)}</span>`;
   });
 }
 
@@ -2254,11 +2432,14 @@ function renderAlerts(html: string): string {
 
     const alert = ALERTS[m[1].toLowerCase()];
     // The marker line is gone; drop the paragraph too if the marker was alone in it.
-    const body = ("<p>" + html.slice(m.index + m[0].length, end)).replace(/^<p><\/p>\n?/, "");
+    let body = ("<p>" + html.slice(m.index + m[0].length, end)).replace(/^<p><\/p>\n?/, "");
+    // Whose box it is (see NOTE_BY) goes behind its title.
+    const by = markSays(body.match(NOTE_BY)?.[1] ?? "", "by");
+    if (by !== undefined) body = body.replace(new RegExp(`\\n?${NOTE_BY.source}`), "");
     out += html.slice(pos, m.index);
     out +=
-      `<div class="alert alert-${m[1].toLowerCase()}">` +
-      `<p class="alert-title">${alert.icon}${alert.title}</p>\n${body}</div>`;
+      `<div class="alert alert-${m[1].toLowerCase()}"${by ? ` data-by="${escapeHtml(by)}"` : ""}>` +
+      `<p class="alert-title"${by ? ` data-by="${escapeHtml(by)}"` : ""}>${alert.icon}${alert.title}</p>\n${body}</div>`;
     pos = end + "</blockquote>".length;
     opener.lastIndex = pos;
   }
@@ -2629,8 +2810,11 @@ function safePath(pathname: string): string | null {
 //   an equation corrected where it stands (one that pdf2md built from the PDF's text: under
 //     a mark of pdf2md's, or as a fix; see keepCorrection);
 //   <span class="fix" data-was="as converted">as in the book</span>;
-//   the same with data-to="improve", and an equation with <!-- mdBun:improved --> behind it,
-//     where the change is not to match the original but to improve on it;
+//   the same with data-to="improve", and an equation with <!-- mdBun:improved … --> behind
+//     it, where the change is not to match the original but to improve on it;
+//   whose change it is: data-by="Ann" in a fix and in a note, by="Ann" in the mark behind a
+//     changed equation (<!-- mdBun:corrected … --> where it is to match the original), which
+//     also keeps what the equation was, and <!-- mdBun:note by="Ann" --> in an alert box;
 //   <details class="mine"> … </details> or > [!WARNING] after a block, between empty lines;
 //   <sup>[✎](#mine-N)</sup> in a sentence, with id="mine-N" on its note.
 // A change whose place in the file isn't certain is refused with a message for the reader.
@@ -2735,21 +2919,23 @@ function formulaUnit(src: string, span: Span): Span & { key?: string } {
   const front = behind ? undefined : src.slice(Math.max(0, span.start - 60), span.start).match(EQ_KEY_BEFORE)?.[0];
   return {
     start: span.start - (front?.length ?? 0),
-    end: improvedMark(src, span.end)?.end ?? span.end + (behind?.length ?? 0),
+    end: changeMark(src, span.end)?.end ?? span.end + (behind?.length ?? 0),
     key: behind ?? front,
   };
 }
 
-// 1: the converted text, 2: what else the tag has (data-to="improve"), 3: the words now.
+// 1: the converted text, 2: what else the tag has (data-to="improve", data-by="Ann"), 3: the
+// words now.
 const FIX_SPAN = /<span class="fix" data-was="([^"]*)"([^>]*)>([\s\S]*?)<\/span>/g;
 const TO_IMPROVE = ' data-to="improve"';
 
 /**
  * A fix as written in the file. was: the converted text as the attribute has it; rest: what
- * else the tag had before; to: "match" or "improve" as the page chose (neither: as it was).
+ * else the tag had before; to: "match" or "improve" as the page chose (neither: as it was);
+ * by: whose change it is (not given: as it was).
  */
-function fixSpan(was: string, rest: string, now: string, to: unknown, style?: string): string {
-  return `<span class="fix" data-was="${was}"${fixRest(rest, to, style)}>${now}</span>`;
+function fixSpan(was: string, rest: string, now: string, to: unknown, style?: string, by?: string): string {
+  return `<span class="fix" data-was="${was}"${fixRest(rest, to, style, by)}>${now}</span>`;
 }
 
 /**
@@ -2757,14 +2943,16 @@ function fixSpan(was: string, rest: string, now: string, to: unknown, style?: st
  * none; not given: as it was). Whatever else the tag has, written into the file by hand, stays.
  */
 const STYLE_ATTR = /\s+style="([^"]*)"/;
+const BY_ATTR = /\s+data-by="([^"]*)"/;
 
-function fixRest(rest: string, to: unknown, style?: string): string {
+function fixRest(rest: string, to: unknown, style?: string, by?: string): string {
   const improve = to === "improve" || (to !== "match" && rest.includes(TO_IMPROVE));
-  let others = rest.replace(/\s+data-to="[^"]*"/g, "");
+  const who = by === undefined ? rest.match(BY_ATTR)?.[1] : toAttr(by);
+  let others = rest.replace(/\s+data-to="[^"]*"/g, "").replace(new RegExp(BY_ATTR, "g"), "");
   if (style !== undefined) {
     others = others.replace(new RegExp(STYLE_ATTR, "g"), "") + (style ? ` style="${toAttr(style)}"` : "");
   }
-  return (improve ? TO_IMPROVE : "") + others;
+  return (improve ? TO_IMPROVE : "") + (who ? ` data-by="${who}"` : "") + others;
 }
 
 /** The style as the dialog's field has it: CSS, on one line (also taken as style="…", as the tag has it). */
@@ -2783,7 +2971,11 @@ const fromAttr = (s: string) =>
   s.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
     .replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 
-function editMath(src: string, edit: any, book: boolean): string {
+/**
+ * me: whose change it is. edit.undo: the equation is to be what it was before it was changed,
+ * as the file keeps it (see changesIn).
+ */
+function editMath(src: string, edit: any, book: boolean, me: string): string {
   const { start, end } = locate(src, { math: edit.where?.math ?? {} });
   const old = src.slice(start, end);
   const { display, open, close } = mathMarks(old);
@@ -2791,8 +2983,23 @@ function editMath(src: string, edit: any, book: boolean): string {
   // keep the delimiters and the line breaks inside them as they were
   const lead = inner.match(/^\s*/)![0];
   const trail = inner.trim() ? inner.match(/\s*$/)![0] : "";
-  const now = String(edit.now ?? "").trim();
+  const { tex, indent } = texAt(src, { start, end });
+  const had = changesIn(src)({ start, end });
+  if (edit.undo && had?.was === undefined) {
+    throw new EditError("The file doesn't keep what this equation was before it was changed.");
+  }
+  // (what it was, as the mark keeps it: one read from a picture without its number)
+  const own = (t: string) => (display ? asKept(src, { start, end }, t) : t);
+  const now = edit.undo
+    ? (had!.was! + (own(tex) === tex ? "" : numberOf(tex))).split("\n").join("\n" + indent)
+    : String(edit.now ?? "").trim();
   if (!now) throw new EditError("The equation can't be empty.");
+  // What it is for: as the page chose, or as it was. Put back as it was, it is no change.
+  const before = had?.was ?? own(tex);
+  const changed = !sameTex(own(atMargin(now, indent)), before);
+  const to: Change["to"] =
+    edit.undo ? "match" : edit.to === "improve" || edit.to === "match" ? edit.to : had?.to ?? "match";
+  if (sameTex(atMargin(now, indent), tex) && to === (had?.to ?? "match")) return src;
   // (the check below would take these for a formula in "$", which they would no longer be
   // on GitHub)
   if (old.startsWith("$`") && now.includes("`")) {
@@ -2817,9 +3024,23 @@ function editMath(src: string, edit: any, book: boolean): string {
             : "This can't be saved as one formula: it must stay on one line, without a $ that isn't written \\$.",
     );
   }
-  const marked = markImproved(out, same, edit.to);
-  const kept = book ? keepCorrection(marked, same, old) : marked;
-  return keyedInFix(kept, mathSpans(kept)[edit.where.math.i]);
+  const change: Change | null = changed || to === "improve" ? { to, by: me, was: changed ? before : undefined } : null;
+  const marked = markChange(out, same, change);
+  const kept = book ? keepCorrection(marked, same, old, me) : marked;
+  const lean = leanMark(kept, mathSpans(kept)[edit.where.math.i]);
+  return keyedInFix(lean, mathSpans(lean)[edit.where.math.i]);
+}
+
+/**
+ * The mark of the formula at `span` without what the formula was, where the file keeps that
+ * besides: in pdf2md's mark above it, or in the fix it stands in.
+ */
+function leanMark(src: string, span: Span | undefined): string {
+  const mark = span && changeMark(src, span.end);
+  if (!span || !mark || mark.was === undefined) return src;
+  const bare = changesIn(src.slice(0, mark.start) + src.slice(mark.end))(span);
+  if (bare?.was === undefined || !sameTex(bare.was, mark.was)) return src;
+  return markChange(src, span, { to: mark.to, by: mark.by });
 }
 
 // A book converted by pdf2md is converted again whenever pdf2md gets better, and a corrected
@@ -2848,8 +3069,8 @@ async function convertedBook(dir: string): Promise<boolean> {
   return (await Bun.file(join(dir, BOOK_FILE)).slice(0, 512).text().catch(() => "")).includes("<!-- pdf2md:");
 }
 
-/** The corrected formula at `span` (`old`: as it was), written so that pdf2md keeps it. */
-function keepCorrection(src: string, span: Span, old: string): string {
+/** The corrected formula at `span` (`old`: as it was), written so that pdf2md keeps it. me: whose correction it is. */
+function keepCorrection(src: string, span: Span, old: string, me: string): string {
   const math = src.slice(span.start, span.end);
   // a note of the reader's own is kept whole, with what it holds
   if (noteSpans(src, "mine").some((n) => n.start < span.start && span.end <= n.end)) return src;
@@ -2864,16 +3085,10 @@ function keepCorrection(src: string, span: Span, old: string): string {
     const above = src.slice(0, line);
     if (/<!-- pdf2md:eq [0-9a-f]+ -->[ \t]*\n(?:[ \t]*\n)?$/.test(above)) return src;
     // what stands between the fences, as at the margin (in a list item all of it is set in)
-    const margin = (s: string) => s.split("\n").map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join("\n");
-    const body = (m: string) => margin(m.slice(m.indexOf("\n") + 1, m.lastIndexOf("\n")));
-    const at = above.lastIndexOf(FIX_MARK);
-    const markLine = above.lastIndexOf("\n", at - 1) + 1;
+    const body = (m: string) => atMargin(m.slice(m.indexOf("\n") + 1, m.lastIndexOf("\n")), indent);
     // (the mark right above the block: nothing but an empty line between its end and the fence)
-    const close = at < 0 ? -1 : above.indexOf(" -->", at);
-    if (close >= 0 && above.slice(markLine, at) === indent && /^\n[ \t]*\n$/.test(above.slice(close + 4))) {
-      const kept = fromAttr(margin(above.slice(at + FIX_MARK.length, close)));
-      return body(math) === kept ? src.slice(0, markLine) + src.slice(line) : src;
-    }
+    const fix = fixAbove(src, span);
+    if (fix) return body(math) === fix.was ? src.slice(0, fix.markLine) + src.slice(line) : src;
     const was = body(old);
     if (was === body(math)) return src;
     return above + indent + FIX_MARK + toMark(was).split("\n").join("\n" + indent) + " -->\n\n" + src.slice(line);
@@ -2890,10 +3105,10 @@ function keepCorrection(src: string, span: Span, old: string): string {
       return m[3] === fromAttr(m[1]) ? src.slice(0, m.index) + m[3] + src.slice(end) : src;
     }
   }
-  // The fix: the formula with the mark of an improvement behind it, and the words around it
-  // that make its converted text the first of its kind in the line as converted.
+  // The fix: the formula with our mark behind it, and the words around it that make its
+  // converted text the first of its kind in the line as converted.
   let start = span.start;
-  let end = span.end + (src.slice(span.end).startsWith(IMPROVED) ? IMPROVED.length : 0);
+  let end = changeMark(src, span.end)?.end ?? span.end;
   const after = end;
   const lineEnd = (src.indexOf("\n", end) + 1 || src.length + 1) - 1;
   const first = line + src.slice(line, span.start).match(/^[ \t]*(?:(?:[-+*>|]|\d+[.)]|#{1,6})[ \t]+)*/)![0].length;
@@ -2913,24 +3128,28 @@ function keepCorrection(src: string, span: Span, old: string): string {
     if (!word || !PLAIN_WORD.test(word[1])) break;
     end += word[0].length;
   }
-  return src.slice(0, start) + fixSpan(toAttr(was()), "", src.slice(start, end), "match") + src.slice(end);
+  return src.slice(0, start) + fixSpan(toAttr(was()), "", src.slice(start, end), "match", undefined, me) + src.slice(end);
 }
 
-/** The formula at `span` with or without the mark of an improvement behind it, as the page chose. */
-function markImproved(src: string, span: Span, to: unknown): string {
-  if (to !== "improve" && to !== "match") return src;
-  const mark = improvedMark(src, span.end);
-  if ((to === "improve") === !!mark) return src;
-  if (mark) return src.slice(0, mark.start) + src.slice(mark.end);
-  const at = span.end + (src.slice(span.end).match(EQ_KEY)?.[0].length ?? 0);
+/** The formula at `span` with this mark behind it (see changeMark), or with none. */
+function markChange(src: string, span: Span, change: Change | null): string {
+  const mark = changeMark(src, span.end);
+  if (mark) {
+    if (!change) return src.slice(0, mark.start) + src.slice(mark.end);
+    // (the mark where the old one was: on its own line under a displayed formula)
+    const lead = src.slice(mark.start, mark.end).match(/^[ \t]*\r?\n[ \t>]*/)?.[0] ?? "";
+    return src.slice(0, mark.start) + lead + markOf(change) + src.slice(mark.end);
+  }
+  if (!change) return src;
+  const at = span.end + (src.slice(span.end, span.end + 60).match(EQ_KEY)?.[0].length ?? 0);
   // A displayed formula that ends its line has the mark on a line of its own, set in like
   // the formula's last line (in a list item, in a quote).
-  if (mathMarks(src.slice(span.start, span.end)).display && /^[ \t]*(?:\r?\n|$)/.test(src.slice(at))) {
+  if (mathMarks(src.slice(span.start, span.end)).display && /^[ \t]*(?:\r?\n|$)/.test(src.slice(at, at + 200))) {
     const line = src.lastIndexOf("\n", span.end - 1) + 1;
     const indent = src.slice(line, span.end).match(/^[ \t>]*/)![0];
-    return src.slice(0, at) + "\n" + indent + IMPROVED + src.slice(at);
+    return src.slice(0, at) + "\n" + indent + markOf(change) + src.slice(at);
   }
-  return src.slice(0, at) + IMPROVED + src.slice(at);
+  return src.slice(0, at) + markOf(change) + src.slice(at);
 }
 
 /** The fix the page clicked: the one of that number in the file, if it still keeps the same converted text. */
@@ -3077,25 +3296,30 @@ function rekey(was: string, now: string): string {
   return out;
 }
 
-/** What the dialog of a fix shows: the Markdown to change, and the tag as the file has it or will have it. */
-function peekFix(src: string, edit: any) {
+/**
+ * What the dialog of a fix shows: the Markdown to change, and the tag as the file has it or
+ * will have it. by: whose fix it is so far; me: whose it will be (as the tag writes it).
+ */
+function peekFix(src: string, edit: any, me: string) {
   const { old, start, end } = fixTarget(src, edit.where);
   if (!old) {
     const now = src.slice(start, end).replace(/\r\n/g, "\n");
-    return { old: false, now, was: now, attr: toAttr(now), rest: "", style: "", to: "match" };
+    return { old: false, now, was: now, attr: toAttr(now), rest: "", style: "", to: "match", by: "", me: toAttr(me) };
   }
   return {
     old: true,
     now: old[3].replace(/\r\n/g, "\n"),
     was: fromAttr(old[1]),
     attr: old[1],
-    rest: fixRest(old[2], "match", ""),
+    rest: fixRest(old[2], "match", "", ""),
     style: fromAttr(old[2].match(STYLE_ATTR)?.[1] ?? ""),
     to: old[2].includes(TO_IMPROVE) ? "improve" : "match",
+    by: fromAttr(old[2].match(BY_ATTR)?.[1] ?? ""),
+    me: toAttr(me),
   };
 }
 
-function editFix(src: string, edit: any): string {
+function editFix(src: string, edit: any, me: string): string {
   const { old, start, end } = fixTarget(src, edit.where);
   const had = old ? old[3] : src.slice(start, end);
   if (typeof edit.source === "string" && edit.source !== had.replace(/\r\n/g, "\n")) throw new EditError(CHANGED);
@@ -3105,7 +3329,7 @@ function editFix(src: string, edit: any): string {
   if (loose) throw new EditError(`${loose} is not closed in the fix, or is closed without being opened in it.`);
   const converted = old ? fromAttr(old[1]) : had;
   const original = rekey(converted, now);
-  const rest = fixRest(old?.[2] ?? "", edit.to, styleOf(edit.style));
+  const rest = fixRest(old?.[2] ?? "", edit.to, styleOf(edit.style), me);
   // The converted words again, and no style: no fix (an earlier one is undone).
   const squash = (s: string) => s.replace(/\s+/g, " ");
   const plain = (old ? squash(now) === squash(original) : now === original) && !STYLE_ATTR.test(rest);
@@ -3148,12 +3372,17 @@ async function nextMineId(file: string): Promise<number> {
   return max + 1;
 }
 
-async function editNote(src: string, edit: any, file: string): Promise<string> {
+// Whose note it is: data-by="Ann" in the tag of a note, and in an alert box a last line of
+// the quote, > <!-- mdBun:note by="Ann" -->. The page shows the name behind the title.
+const NOTE_BY = /<!-- mdBun:note((?: [a-z]+="[^"]*")*) -->/;
+const noteBy = (me: string) => `<!-- mdBun:note by="${markAttr(me)}" -->`;
+
+async function editNote(src: string, edit: any, file: string, me: string): Promise<string> {
   const { start, end: found } = locate(src, edit.where);
-  // (behind a formula's own marks: pdf2md's of its picture, and ours of an improvement)
+  // (behind a formula's own marks: pdf2md's of its picture, and ours of a change)
   const end = !edit.where?.math || mathMarks(src.slice(start, found)).display
     ? found
-    : improvedMark(src, found)?.end ?? found + (src.slice(found).match(EQ_KEY)?.[0].length ?? 0);
+    : changeMark(src, found)?.end ?? found + (src.slice(found).match(EQ_KEY)?.[0].length ?? 0);
   const body = String(edit.body ?? "").trim();
   if (!body) throw new EditError("Write something first.");
   const code = codeSpans(src);
@@ -3174,10 +3403,10 @@ async function editNote(src: string, edit: any, file: string): Promise<string> {
       mark = `<sup>[✎](#mine-${n})</sup>`;
     }
     note =
-      `<details class="mine"${id}>\n<summary>${title.startsWith("✎") ? title : "✎ " + title}</summary>\n\n` +
+      `<details class="mine" data-by="${toAttr(me)}"${id}>\n<summary>${title.startsWith("✎") ? title : "✎ " + title}</summary>\n\n` +
       `${body}\n\n</details>`;
   } else if (edit.kind === "warning") {
-    note = "> [!WARNING]\n" + body.split(/\r?\n/).map((l) => (l.trim() ? "> " + l : ">")).join("\n");
+    note = "> [!WARNING]\n" + body.split(/\r?\n/).map((l) => (l.trim() ? "> " + l : ">")).join("\n") + "\n> " + noteBy(me);
   } else {
     throw new EditError("Unknown kind of note.");
   }
@@ -3268,7 +3497,8 @@ function findNote(src: string, where: any) {
   const next = src.slice(span.end).match(/^\r?\n([^\n]*)/)?.[1] ?? "";
   if (next.trim()) throw new EditError(ONLY_IN_FILE);
   const indent = lines[0].match(ALERT_LINE)![1];
-  const body = lines.slice(1).map((l) => l.replace(/^ {0,3}> ?/, "")).join("\n").trim();
+  // (without the line that says whose it is: that is written again with the change)
+  const body = lines.slice(1).map((l) => l.replace(/^ {0,3}> ?/, "")).filter((l) => !new RegExp(`^${NOTE_BY.source}$`).test(l.trim())).join("\n").trim();
   return { kind: "alert", spans, span, was, head: lines[0], summary: "", title: "", body, indent };
 }
 
@@ -3278,7 +3508,7 @@ function peekNote(src: string, edit: any) {
   return { was, title, body };
 }
 
-function editOldNote(src: string, edit: any): string {
+function editOldNote(src: string, edit: any, me: string): string {
   const note = findNote(src, edit.where);
   const { span, spans } = note;
   if (note.was !== edit.where.note.was) throw new EditError(CHANGED);
@@ -3300,10 +3530,12 @@ function editOldNote(src: string, edit: any): string {
       const title = (String(edit.title ?? "").trim() || "My note").replace(/\s+/g, " ").replace(/</g, "&lt;");
       summary = title.startsWith("✎") ? title : "✎ " + title;
     }
-    next = `${note.head}\n<summary>${summary}</summary>\n\n${body}\n\n</details>`;
+    // (whose it is now: right behind class="mine", where pdf2md looks for the tag's beginning)
+    const head = note.head.replace(new RegExp(BY_ATTR, "g"), "").replace(/^<details class="mine"/, `$& data-by="${toAttr(me)}"`);
+    next = `${head}\n<summary>${summary}</summary>\n\n${body}\n\n</details>`;
   } else {
     const quote = note.indent + ">";
-    next = note.head + "\n" + body.split(/\r?\n/).map((l) => (l.trim() ? `${quote} ${l}` : quote)).join("\n");
+    next = note.head + "\n" + body.split(/\r?\n/).map((l) => (l.trim() ? `${quote} ${l}` : quote)).join("\n") + `\n${quote} ${noteBy(me)}`;
   }
   const out = src.slice(0, span.start) + next + src.slice(span.end);
   // It must still be one note, the same one of the file.
@@ -3425,16 +3657,30 @@ const TERMINALS: Record<string, string[]> = {
   alacritty: ["-e"], wezterm: ["start", "--"], ghostty: ["-e"], "xfce4-terminal": ["-x"], xterm: ["-e"],
 };
 
-const EDITOR_SETTING = join(
-  process.env.XDG_CONFIG_HOME || join(process.env.HOME ?? "", ".config"),
-  "mdBun",
-  "editor",
-);
+const SETTINGS = join(process.env.XDG_CONFIG_HOME || join(process.env.HOME ?? "", ".config"), "mdBun");
+const EDITOR_SETTING = join(SETTINGS, "editor");
+
+/** The first line of a setting's file that says something (read each time, so `md --name` counts at once). */
+async function setting(file: string): Promise<string | undefined> {
+  const lines = (await Bun.file(file).text().catch(() => "")).split("\n");
+  return lines.map((l) => l.trim()).find((l) => l && !l.startsWith("#"));
+}
+
+/**
+ * Whose changes the page's are: the name every change made from a page is written with (see
+ * changeMark, fixRest, NOTE_BY). Set with `md --name`; else the name the computer knows its
+ * user by.
+ */
+async function myName(): Promise<string> {
+  let login = "";
+  try { login = userInfo().username; } catch {}
+  const name = (await setting(join(SETTINGS, "name"))) || login || "me";
+  return name.replace(/[\s"<>]+/g, " ").trim().slice(0, 60) || "me";
+}
 
 /** The reader's editor as set (read each time, so `md --editor` counts at once), and where from. */
 async function editorSetting(): Promise<{ command: string; from: string } | null> {
-  const lines = (await Bun.file(EDITOR_SETTING).text().catch(() => "")).split("\n");
-  const set = lines.map((l) => l.trim()).find((l) => l && !l.startsWith("#"));
+  const set = await setting(EDITOR_SETTING);
   if (set) return { command: set, from: "md --editor" };
   for (const name of ["VISUAL", "EDITOR"]) {
     const command = process.env[name]?.trim();
@@ -3654,11 +3900,12 @@ let editQueue: Promise<unknown> = Promise.resolve();
 function saveEdit(file: string, edit: any): Promise<void> {
   const run = editQueue.then(async () => {
     const src = await Bun.file(file).text();
+    const me = await myName();
     const out =
-      edit.op === "math" ? editMath(src, edit, await convertedBook(dirname(file)))
-      : edit.op === "fix" ? editFix(src, edit)
-      : edit.op === "note" ? await editNote(src, edit, file)
-      : edit.op === "renote" ? editOldNote(src, edit)
+      edit.op === "math" ? editMath(src, edit, await convertedBook(dirname(file)), me)
+      : edit.op === "fix" ? editFix(src, edit, me)
+      : edit.op === "note" ? await editNote(src, edit, file, me)
+      : edit.op === "renote" ? editOldNote(src, edit, me)
       : null;
     if (out === null) throw new EditError("Unknown change.");
     if (out === src) return;
@@ -3756,7 +4003,7 @@ const server = Bun.serve({
         // Not a change: the Markdown of a note or of the selection, for the page to show.
         if (edit.op === "peek") return Response.json(peekNote(await Bun.file(file).text(), edit));
         if (edit.op === "source") return Response.json(peekSource(await Bun.file(file).text(), edit));
-        if (edit.op === "fixsource") return Response.json(peekFix(await Bun.file(file).text(), edit));
+        if (edit.op === "fixsource") return Response.json(peekFix(await Bun.file(file).text(), edit, await myName()));
         if (edit.op === "editor") return Response.json(await openEditor(file, await Bun.file(file).text(), edit));
         await saveEdit(file, edit);
         return Response.json({ ok: true });
