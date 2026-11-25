@@ -1309,6 +1309,7 @@ const browseDialog = (dir: string) => `<button class="browse-toggle" type="butto
 //  - clicking one of those notes, or any alert box, opens its Markdown to change or delete it;
 //  - 🔬 shows the Markdown of whatever is selected (words, formatting, formulas), unchanged;
 //  - "Editor" opens the file in the reader's own editor at the selection (see openEditor).
+//  - "Next change" goes to the next thing that was changed, and from the last to the first.
 // A fix and a corrected equation are either to match the original (the conversion got it
 // wrong: the usual case, written as it always was) or to improve on it (the book is changed:
 // marked so in the file, and shown in a colour of its own). The dialog asks which.
@@ -1816,6 +1817,46 @@ const EDIT_HEAD = String.raw`
           copy.focus();
         }
 
+        // "Next change": through what was changed in the file, in the order the page has it:
+        // a fix, a changed equation, a note of your own, an alert box. What stands inside one
+        // of them (the formula of a fix) is the same place. After the last comes the first.
+        // The next is the one behind the one last shown, for as long as the window shows that
+        // one; after scrolling away from it, the first that begins in the window or under it.
+        // Which one was last shown is kept for the tab, since saving a change loads the page
+        // anew: it is known again if the page has as many changes as it had.
+        const STOPS = CHANGED + ", details.mine, .alert", AT = "md-edit-at";
+        let stop = null;
+        function nextChange() {
+          const all = [...document.querySelectorAll(STOPS)].filter((el) => !el.parentElement.closest(STOPS + ", dialog"));
+          if (!all.length) { say("Nothing on this page was changed."); return; }
+          if (!stop || !stop.isConnected) {
+            stop = null;
+            try {
+              const kept = JSON.parse(sessionStorage.getItem(AT) || "null");
+              if (kept && kept.path === location.pathname && kept.count === all.length) stop = all[kept.i] || null;
+            } catch {}
+          }
+          // (what a closed <details> hides is where that is)
+          const box = (el) => {
+            while (el.parentElement && !el.getClientRects().length) el = el.parentElement;
+            return el.getBoundingClientRect();
+          };
+          const last = stop ? all.indexOf(stop) : -1;
+          const r = last < 0 ? null : box(stop);
+          let i = r && r.bottom > 0 && r.top < innerHeight ? last + 1 : all.findIndex((el) => box(el).top >= 0);
+          const again = i < 0 || i >= all.length;
+          if (again) i = 0;
+          stop = all[i];
+          try { sessionStorage.setItem(AT, JSON.stringify({ path: location.pathname, i, count: all.length })); } catch {}
+          // Shown: a note opened, as its ✎ marker opens it, and whatever it is folded away in.
+          for (let d = stop.closest("details"); d; d = d.parentElement.closest("details")) d.open = true;
+          stop.scrollIntoView({ block: stop.getBoundingClientRect().height > innerHeight * 0.7 ? "start" : "center" });
+          stop.classList.remove("md-flash");
+          void stop.offsetWidth; // restart the animation
+          stop.classList.add("md-flash");
+          say("Change " + (i + 1) + " of " + all.length + (again && all.length > 1 ? ": the first again, after the last." : "."));
+        }
+
         // Keep the selection when a button of the bar is pressed.
         bar.addEventListener("mousedown", (e) => { if (e.target.closest("button")) e.preventDefault(); });
         bar.addEventListener("click", (e) => {
@@ -1823,6 +1864,7 @@ const EDIT_HEAD = String.raw`
           if (!button) return;
           if (button.dataset.do === "source") { openSource(); return; }
           if (button.dataset.do === "editor") { openEditor(); return; }
+          if (button.dataset.do === "next") { nextChange(); return; }
           let where;
           try { where = place(picked()); } catch (err) { say(err.message, true); return; }
           say(HINT);
@@ -1862,6 +1904,7 @@ const editTools = (checklist: boolean) => `<button class="edit-toggle" type="but
   <button type="button" data-do="warning" title="Add a warning box after the paragraph of the selected words">Warning</button>
   <button type="button" data-do="source" aria-label="See the Markdown of the selection" title="See the Markdown of the selection: how what you selected is written in the file">🔬</button>
   <button type="button" data-do="editor" title="Open the file in your own editor, at the selection (or at what the window shows)">Editor</button>
+  <button type="button" data-do="next" title="Go to the next change on the page: a fix, a changed equation, a note or a warning. After the last, the first again">Next change</button>
   ${checklist ? '<a href="check-equations.md" title="The equations most worth comparing with the book">Equations to check</a>' : ""}
   <span class="edit-msg" aria-live="polite"></span>
 </div>

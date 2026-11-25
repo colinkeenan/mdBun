@@ -162,6 +162,7 @@ The ✏️ button turns editing on for the tab and shows a bar of buttons. Every
 * **Warning**: the same, as a box that is always visible, for example where you think the book is wrong.
 * **🔬 See the Markdown**: select anything (words, bold text, a link, a list, a table, a formula) and press the button to see how it is written in the file. The selection is highlighted within the whole of its paragraphs. Nothing is changed, so it may be of anything: several paragraphs, a list, a displayed equation.
 * **Editor**: opens the file in [your own editor](#your-editor), at what you selected.
+* **Next change**: goes to the next thing that was changed on the page and flashes it: a fix, a changed equation, a note or a warning. It starts from where you are reading, says which one it is ("Change 3 of 12"), and after the last goes back to the first.
 * **Equations to check** opens `check-equations.md` if the folder has one.
 
 **A corrected equation in a book from pdf2md** is written so that pdf2md keeps it when it converts the book again:
