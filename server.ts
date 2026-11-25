@@ -2163,8 +2163,10 @@ const PROTECT = new RegExp(
     // equation keeps the equation as converted)
     "<!--[\\s\\S]*?-->",
     // (also set in, as inside a list item: the fence and each line of the TeX
-    // stand under the item's words)
-    "(?<=^[ \\t]*)(```math[ \\t]*\\n[\\s\\S]*?^[ \\t]*```)[ \\t]*$", // 1: display math, fenced
+    // stand under the item's words; or in a quote or an alert box, where each of those
+    // lines begins with the quote's ">")
+    "((?<=^[ \\t]*)```math[ \\t]*\\n[\\s\\S]*?^[ \\t]*```" +
+      "|(?<=^[ \\t]*(?:>[ \\t]*)+)```math[ \\t]*\\n(?:[ \\t]*>[^\\n]*\\n)*?[ \\t]*(?:>[ \\t]*)+```)[ \\t]*$", // 1: display math, fenced
     "(\\$`[^`]+`\\$)", // 2: inline math, in backticks
     "^(`{3,}|~{3,})[^\\n]*\\n[\\s\\S]*?^\\3[ \\t]*$", // 3: fenced code  (kept as is)
     "(`+)(?:(?!\\4)[\\s\\S])+?\\4", // 4: inline code (kept as is)
@@ -2233,20 +2235,55 @@ const markOf = (c: Change) =>
   (c.was !== undefined ? ` was="${markAttr(c.was)}"` : "") +
   " -->";
 
-/** Lines without what they are set in by (in a list item, a block stands under the item's words). */
-const atMargin = (s: string, indent: string) =>
-  indent ? s.split("\n").map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l)).join("\n") : s;
+/**
+ * Lines without what they are set in by: the blanks of a list item (a block stands under the
+ * item's words), the ">" of a quote. (A quote's ">" may have a blank behind it or none, and
+ * an empty line of it has none.)
+ */
+const atMargin = (s: string, indent: string) => {
+  if (!indent) return s;
+  const quote = indent.includes(">") ? new RegExp(`^(?:[ \\t]*>[ \\t]?){${indent.split(">").length - 1}}`) : null;
+  return s
+    .split("\n")
+    .map((l) => (l.startsWith(indent) ? l.slice(indent.length) : quote ? l.replace(quote, "") : l))
+    .join("\n");
+};
+
+/** The other way, for a quote: every line but the first behind the quote's ">". */
+const inQuote = (s: string, quote: string) =>
+  s.split("\n").map((l, i) => (i === 0 ? l : l.trim() ? quote + l : quote.trimEnd())).join("\n");
+
+/**
+ * What the lines of a displayed formula are set in by, which is no part of its TeX: the
+ * blanks before it if it begins its line (a list item), the ">" its line begins with (a
+ * quote, an alert box).
+ */
+function setIn(src: string, span: Span): string {
+  if (!mathMarks(src.slice(span.start, span.end)).display) return "";
+  const before = src.slice(src.lastIndexOf("\n", span.start - 1) + 1, span.start);
+  return /^[ \t]*$/.test(before) ? before : (before.match(/^[ \t]*(?:>[ \t]*)+/)?.[0] ?? "");
+}
+
+/**
+ * A formula as the page has it: as the file writes it, but one in a quote without the ">"
+ * its lines begin with (KaTeX would typeset them). The page says which formula it means
+ * with this (see locate).
+ */
+function shownMath(src: string, span: Span): string {
+  const math = src.slice(span.start, span.end);
+  const quote = setIn(src, span);
+  return quote.includes(">") ? atMargin(math, quote) : math;
+}
 
 /** The same TeX, but for how its blanks are set. */
 const sameTex = (a: string, b: string) => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
 
 /** A formula's TeX without the marks around it, a displayed one's at the margin; indent: what its lines are set in by. */
 function texAt(src: string, span: Span): { tex: string; indent: string } {
-  const math = src.slice(span.start, span.end);
-  const { display, open, close } = mathMarks(math);
-  const before = src.slice(src.lastIndexOf("\n", span.start - 1) + 1, span.start);
-  const indent = display && /^[ \t]*$/.test(before) ? before : "";
-  return { tex: atMargin(math.slice(open, math.length - close).trim(), indent), indent };
+  const indent = setIn(src, span);
+  const math = atMargin(src.slice(span.start, span.end), indent);
+  const { open, close } = mathMarks(math);
+  return { tex: math.slice(open, math.length - close).trim(), indent };
 }
 
 // An equation read from a picture (pdf2md's mark of the picture is above it) has its number
@@ -2336,7 +2373,8 @@ function protectMath(src: string) {
     const math = mathOf(groups);
     if (!math) return m;
     const at = groups[6] as unknown as number; // where the match is: what follows the six groups
-    stash.push({ math, change: changeOf({ start: at, end: at + math.length }) });
+    const span = { start: at, end: at + math.length };
+    stash.push({ math: shownMath(src, span), change: changeOf(span) });
     return `ZZMATH${stash.length - 1}ZZ`;
   });
   return { text, stash };
@@ -2916,7 +2954,7 @@ function shownText(src: string): string {
 function locate(src: string, where: any): Span {
   if (where?.math) {
     const span = mathSpans(src)[where.math.i];
-    if (!span || src.slice(span.start, span.end).replace(/\r\n/g, "\n") !== where.math.was) {
+    if (!span || shownMath(src, span).replace(/\r\n/g, "\n") !== where.math.was) {
       throw new EditError(CHANGED);
     }
     return span;
@@ -3028,13 +3066,18 @@ const fromAttr = (s: string) =>
  */
 function editMath(src: string, edit: any, book: boolean, me: string): string {
   const { start, end } = locate(src, { math: edit.where?.math ?? {} });
-  const old = src.slice(start, end);
+  const written = src.slice(start, end);
+  const { tex, indent: setBy } = texAt(src, { start, end });
+  // One in a quote is changed as the page has it, without the ">" its lines begin with,
+  // and written back behind them.
+  const quote = setBy.includes(">") ? setBy : "";
+  const old = quote ? atMargin(written, quote) : written;
+  const indent = quote ? "" : setBy;
   const { display, open, close } = mathMarks(old);
   const inner = old.slice(open, old.length - close);
   // keep the delimiters and the line breaks inside them as they were
   const lead = inner.match(/^\s*/)![0];
   const trail = inner.trim() ? inner.match(/\s*$/)![0] : "";
-  const { tex, indent } = texAt(src, { start, end });
   const had = changesIn(src)({ start, end });
   if (edit.undo && had?.was === undefined) {
     throw new EditError("The file doesn't keep what this equation was before it was changed.");
@@ -3059,7 +3102,8 @@ function editMath(src: string, edit: any, book: boolean, me: string): string {
   if (old.startsWith("```") && /^```/m.test(now)) {
     throw new EditError("This can't be saved as one equation: no line of it may start with ```.");
   }
-  const next = old.slice(0, open) + lead + now + trail + old.slice(old.length - close);
+  const shown = old.slice(0, open) + lead + now + trail + old.slice(old.length - close);
+  const next = quote ? inQuote(shown, quote) : shown;
   const out = src.slice(0, start) + next + src.slice(end);
   // It must still be one formula, the same one of the file.
   const after = mathSpans(out);
@@ -3077,7 +3121,7 @@ function editMath(src: string, edit: any, book: boolean, me: string): string {
   }
   const change: Change | null = changed || to === "improve" ? { to, by: me, was: changed ? before : undefined } : null;
   const marked = markChange(out, same, change);
-  const kept = book ? keepCorrection(marked, same, old, me) : marked;
+  const kept = book ? keepCorrection(marked, same, written, me) : marked;
   const lean = leanMark(kept, mathSpans(kept)[edit.where.math.i]);
   return keyedInFix(lean, mathSpans(lean)[edit.where.math.i]);
 }

@@ -265,7 +265,7 @@ The editor is always the one named on your computer, never one named by a page: 
 
 ### Math
 
-mdBun reads math in four forms: `$…$` and `$$…$$`, and the two that GitHub shows correctly whatever the formula contains, ``$`…`$`` in a sentence and a block fenced with ```` ```math ````. All four look the same in mdBun.
+mdBun reads math in four forms: `$…$` and `$$…$$`, and the two that GitHub shows correctly whatever the formula contains, ``$`…`$`` in a sentence and a block fenced with ```` ```math ````. All four look the same in mdBun. A displayed formula can stand in a quote or an alert box too, such as a warning of your own: each of its lines then begins with the quote's `>`, the fences included.
 
 A displayed formula is fitted to the width it has, so that on a phone it need not be scrolled sideways and never runs into its number. A formula that is too wide is, in this order:
 
