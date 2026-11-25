@@ -172,7 +172,7 @@ The ✏️ button turns editing on for the tab and shows a bar of buttons. Every
 
 Undo the change, or correct the equation back to what was converted, and the mark or the fix is gone again. pdf2md corrects every displayed equation of the chapter that it converts to the same LaTeX, so a mistake the conversion makes several times needs correcting once. That goes for both forms of math, a block fenced with ```` ```math ```` and one between lines of `$$`. In a folder that pdf2md did not write, an equation is simply corrected where it stands.
 
-Notes and warnings are Markdown and can hold math. To change or remove one, click it while editing. **Delete** has to be pressed twice, since what you wrote is gone for good.
+Notes and warnings are Markdown and can hold math. To change or remove one, click it while editing: anywhere in it, also on an equation in it, which is changed in the note's Markdown. **Delete** has to be pressed twice, since what you wrote is gone for good.
 
 Two limits:
 

@@ -185,6 +185,8 @@ const CSS = `
   :root[data-edit] details.mine, :root[data-edit] .alert { cursor: pointer; }
   :root[data-edit] details.mine:hover, :root[data-edit] .alert:hover {
     outline: 1px dashed var(--a-note); outline-offset: 2px; }
+  /* (an equation in a note opens the note, so it is not outlined by itself) */
+  :root[data-edit] :is(details.mine, .alert) .math[data-i]:hover { outline: none; }
   .edit-delete { color: var(--a-caution); }
   .edit-dialog { width: min(42rem, calc(100vw - 2rem)); box-sizing: border-box; padding: 1rem;
                  border: 1px solid #8885; border-radius: 8px; background: Canvas; color: CanvasText; }
@@ -1306,7 +1308,8 @@ const browseDialog = (dir: string) => `<button class="browse-toggle" type="butto
 //    formulas and formatting), and the tag can be given a style;
 //  - "Note" and "Warning" add <details class="mine"> or > [!WARNING] after the paragraph of
 //    the selected words (or after an equation, from its dialog), with an optional ✎ marker;
-//  - clicking one of those notes, or any alert box, opens its Markdown to change or delete it;
+//  - clicking one of those notes, or any alert box, opens its Markdown to change or delete it:
+//    anywhere in it, also on an equation or a fix that it holds;
 //  - 🔬 shows the Markdown of whatever is selected (words, formatting, formulas), unchanged;
 //  - "Editor" opens the file in the reader's own editor at the selection (see openEditor).
 //  - "Next change" goes to the next thing that was changed, and from the last to the first.
@@ -1879,15 +1882,20 @@ const EDIT_HEAD = String.raw`
           const sel = getSelection();
           if (sel && !sel.isCollapsed) return; // the end of selecting, not a click
           if (e.target.closest("dialog, .edit-bar")) return;
+          // A note is changed as a whole, so a click anywhere in it opens the note: on an
+          // equation or a fix in it too, which are changed in its Markdown. (Else a note that
+          // holds nothing but an equation could not be changed or deleted.)
+          const note = e.target.closest("details.mine, .alert");
+          if (note) {
+            // Links in a note still work, and its title still opens and closes it.
+            const own = e.target.closest("a, summary");
+            if (!own || !note.contains(own)) { e.preventDefault(); openOld(note); }
+            return;
+          }
           const math = e.target.closest(".math[data-i]");
           if (math) { e.preventDefault(); openMath(math); return; }
           const fix = e.target.closest("span.fix[data-was]");
-          if (!fix) {
-            // Links in a note still work, and its title still opens and closes it.
-            const note = e.target.closest("details.mine, .alert");
-            if (note && !e.target.closest("a, summary")) { e.preventDefault(); openOld(note); }
-            return;
-          }
+          if (!fix) return;
           // Which fix of the file it is.
           e.preventDefault();
           askFix({ fix: [...document.querySelectorAll("span.fix[data-was]")].indexOf(fix), was: fix.dataset.was });
