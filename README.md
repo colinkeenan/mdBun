@@ -143,7 +143,9 @@ Search skips hidden folders and `node_modules`, and stops after 5000 files.
 
 Each file opens where you were last reading it, in any tab and after a restart of the server or the browser. The place is kept as the paragraph at the top of the window, so it is still right at a different window width. A link to a place in the file, or a search result, opens there instead.
 
-When you leave where you were reading, by following a link within the page, stepping through matches, or scrolling a long way, a ↩️ button appears. It takes you back; pressing it again returns you to where you pressed it. A new place replaces the old one only after you have stayed there for half a minute, so a chain of links still leads back to where you started.
+When you leave where you were reading, by following a link within the page, stepping through matches, or scrolling a long way, a ↩️ button appears. It takes you back; pressing it again returns you to where you pressed it. A new place replaces the old one only after you have stayed there for half a minute, so stepping through matches still leads back to where you started.
+
+A link within the page is different: clicking it always makes that link the place to go back to, and going back shows the paragraph the link is in, lit up for a moment.
 
 Places are kept by the browser, in its storage for `localhost:3000`, not in the files.
 

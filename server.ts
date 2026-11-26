@@ -945,9 +945,13 @@ const liveHead = (self: string, isDir = false) => `
 //
 // Moving more than a window and a half between two pauses counts as leaving, anything less as
 // reading on. Once there is a place to go back to, later jumps don't replace it unless you
-// stayed where you were for a while (DWELL), so stepping through search results or following
-// a few links in a row still leads back to where you were reading. Scrolling back there
-// yourself removes the button.
+// stayed where you were for a while (DWELL), so stepping through search results still leads
+// back to where you were reading. Scrolling back there yourself removes the button.
+//
+// A click on a link to somewhere in the page is different: the link is what you go back to,
+// whatever there was to go back to before. The place then also says which link it was (the
+// block it is in, which of that block's links, and its href, to tell that it still is that
+// link), and going back flashes the paragraph the link is in, and the link in it.
 //
 // This script must come before liveHead's in <head>: it looks at what a live reload left in
 // sessionStorage before that script removes it, and its load handler must run first.
@@ -961,7 +965,16 @@ const PLACE_HEAD = String.raw`
       // Otherwise the browser's own idea of where to scroll to arrives after ours.
       try { history.scrollRestoration = "manual"; } catch {}
 
-      const ok = (p) => p && [p.i, p.f, p.y].every(Number.isFinite) ? { i: p.i, f: p.f, y: p.y } : null;
+      const BLOCKS = "p, li, h1, h2, h3, h4, h5, h6, td, th, pre, blockquote, dt, dd, figcaption, summary";
+
+      const ok = (p) => {
+        if (!p || ![p.i, p.f, p.y].every(Number.isFinite)) return null;
+        const pos = { i: p.i, f: p.f, y: p.y }, l = p.link;
+        if (l && Number.isInteger(l.i) && Number.isInteger(l.n) && typeof l.href === "string") {
+          pos.link = { i: l.i, n: l.n, href: l.href };
+        }
+        return pos;
+      };
       let here = null, back = null;
       try {
         const saved = JSON.parse(localStorage.getItem(KEY) || "null");
@@ -999,6 +1012,29 @@ const PLACE_HEAD = String.raw`
         return r && r.height > 0 ? r.top + scrollY + pos.f * r.height : pos.y;
       }
 
+      /** Which link of the page this is, to be found again by linkOf. */
+      function linkAt(a) {
+        const kids = document.body.children;
+        for (let i = 0; i < kids.length; i++) {
+          if (!kids[i].contains(a)) continue;
+          if (kids[i].matches(UI)) return null;
+          const n = kids[i] === a ? 0 : [...kids[i].querySelectorAll("a[href]")].indexOf(a);
+          return n < 0 ? null : { i, n, href: a.getAttribute("href") };
+        }
+        return null;
+      }
+      /** The link a place was left by, if the page still has it there. */
+      function linkOf(pos) {
+        const l = pos.link, el = l && block(l.i);
+        const a = el && (el.matches("a[href]") ? el : el.querySelectorAll("a[href]")[l.n]);
+        return a && a.getAttribute("href") === l.href ? a : null;
+      }
+      function flash(el) {
+        el.classList.remove("md-flash");
+        void el.offsetWidth; // restart the animation
+        el.classList.add("md-flash");
+      }
+
       // Called when scrolling pauses.
       function settle() {
         if (!ready) return;
@@ -1025,18 +1061,48 @@ const PLACE_HEAD = String.raw`
       addEventListener("scroll", () => { clearTimeout(timer); timer = setTimeout(settle, 250); }, { passive: true });
       addEventListener("pagehide", () => { clearTimeout(timer); settle(); });
 
+      // A link to somewhere in this page: the link is where the button goes back to.
+      document.addEventListener("click", (e) => {
+        if (!ready || e.button || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+        const a = e.target.closest && e.target.closest("a[href]");
+        if (!a || (a.target && a.target !== "_self") || a.hasAttribute("download")) return;
+        let to;
+        try { to = new URL(a.href, location.href); } catch { return; }
+        if (!to.hash || to.host !== location.host || to.pathname !== location.pathname || to.search !== location.search) return;
+        const link = linkAt(a);
+        if (!link) return;
+        const pos = where(); // before the page moves
+        pos.link = link;
+        // (after the other click handlers: one of them may have kept the link from being followed)
+        setTimeout(() => {
+          if (e.defaultPrevented) return;
+          back = pos;
+          rest = { pos, since: Date.now() };
+          // Scrolling there calls settle; this is for a link to what is in the window already.
+          clearTimeout(timer);
+          timer = setTimeout(settle, 250);
+        });
+      });
+
       document.addEventListener("click", (e) => {
         if (!back || !e.target.closest || !e.target.closest(".back-toggle")) return;
         clearTimeout(timer);
-        const to = back;
+        const to = back, a = linkOf(to);
         back = where();
         rest = { pos: to, since: 0 };
+        // (a link in a note that has been closed since)
+        for (let d = a && a.closest("details"); d; d = d.parentElement.closest("details")) d.open = true;
         scrollTo(0, yOf(to));
-        const el = block(to.i);
-        if (el) {
-          el.classList.remove("md-flash");
-          void el.offsetWidth; // restart the animation
-          el.classList.add("md-flash");
+        if (a) {
+          // The link is in the window as it was when it was clicked, unless the page has changed.
+          const r = a.getBoundingClientRect();
+          if (r.top < 0 || r.bottom > innerHeight) a.scrollIntoView({ block: "center" });
+          const el = a.closest(BLOCKS);
+          if (el) flash(el);
+          flash(a);
+        } else {
+          const el = block(to.i);
+          if (el) flash(el);
         }
         settle();
       });
